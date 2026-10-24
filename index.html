@@ -1,9 +1,10 @@
+html
 <!DOCTYPE html>
 <html lang="nl">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Beveiligde Live Blinde Lijst</title>
+    <title>Live Blinde Verassingslijst</title>
     <style>
         :root {
             --bg-color: #f4f7f6;
@@ -30,52 +31,19 @@
             padding: 30px;
             border-radius: 12px;
             box-shadow: 0 4px 15px rgba(0,0,0,0.05);
-            box-sizing: border-box;
         }
 
         h1 {
             text-align: center;
             color: var(--primary-color);
-            margin-top: 0;
-        }
-
-        /* Inlogscherm stijlen */
-        #authSection {
-            display: flex;
-            flex-direction: column;
-            gap: 15px;
-            max-width: 350px;
-            margin: 0 auto;
-        }
-
-        input {
-            padding: 12px;
-            border: 1px solid #ccc;
-            border-radius: 6px;
-            font-size: 1rem;
-        }
-
-        .primary-btn {
-            background: var(--primary-color);
-            color: white;
-            border: none;
-            padding: 12px;
-            font-size: 1rem;
-            font-weight: bold;
-            border-radius: 6px;
-            cursor: pointer;
-        }
-
-        /* Hoofd-app stijlen (standaard verborgen) */
-        #mainApp {
-            display: none;
+            margin-bottom: 30px;
         }
 
         .grid {
             display: grid;
             grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
             gap: 15px;
-            margin: 25px 0;
+            margin-bottom: 30px;
         }
 
         .blind-item {
@@ -88,11 +56,19 @@
             border-radius: 8px;
             cursor: pointer;
             transition: transform 0.2s, background-color 0.2s;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+
+        .blind-item:hover {
+            transform: translateY(-2px);
+            background-color: #5b4bc4;
         }
 
         .blind-item:disabled {
             background-color: #b2bec3;
             cursor: not-allowed;
+            transform: none;
+            box-shadow: none;
         }
 
         .reveal-box {
@@ -105,128 +81,87 @@
             display: none;
         }
 
+        .reveal-box h2 {
+            margin-top: 0;
+            font-size: 1.2rem;
+            color: #d63031;
+        }
+
         .revealed-text {
             font-size: 1.5rem;
             font-weight: bold;
             margin: 15px 0;
         }
 
-        .logout-btn {
-            background: #e74c3c;
+        .close-btn {
+            background: var(--text-color);
             color: white;
             border: none;
-            padding: 6px 12px;
+            padding: 8px 16px;
             border-radius: 4px;
             cursor: pointer;
-            float: right;
         }
     </style>
 </head>
 <body>
 
 <div class="container">
-    <!-- INLOGSCHERM -->
-    <div id="authSection">
-        <h1>Inloggen 🔒</h1>
-        <p style="text-align: center; color: #636e72; font-size: 0.9rem;">Voer je e-mail en wachtwoord in om toegang te krijgen tot de lijst.</p>
-        <input type="email" id="emailInput" placeholder="E-mailadres">
-        <input type="password" id="passwordInput" placeholder="Wachtwoord">
-        <button class="primary-btn" id="loginBtn">Log in</button>
-        <p id="authError" style="color: red; font-size: 0.9rem; text-align: center;"></p>
-    </div>
+    <h1>Live Blinde Verassingslijst 🌐</h1>
+    <p style="text-align: center; color: #636e72;">Kies een optie. Zodra je klikt, wordt dit item wereldwijd voor iedereen vergrendeld en zie jij als enige de inhoud.</p>
+    
+    <div class="grid" id="buttonGrid"></div>
 
-    <!-- HOOFD APPLICATIE -->
-    <div id="mainApp">
-        <button class="logout-btn" id="logoutBtn">Uitloggen</button>
-        <h1>Live Blinde Lijst 🌐</h1>
-        <p style="color: #636e72; text-align: center;">Kies blind een optie. Dit wordt live voor iedereen vergrendeld.</p>
-        
-        <div class="grid" id="buttonGrid"></div>
-
-        <div class="reveal-box" id="revealBox">
-            <h2>Jouw geheime item:</h2>
-            <div class="revealed-text" id="revealedText"></div>
-            <p style="font-size: 0.85rem; color: #2d3436;"><em>Schrijf dit direct op. Zodra je dit sluit, is het weg!</em></p>
-            <button class="primary-btn" style="background:#2d3436; padding: 8px 16px;" onclick="closeReveal()">Ik heb het genoteerd</button>
-        </div>
+    <div class="reveal-box" id="revealBox">
+        <h2>Jouw geheime item:</h2>
+        <div class="revealed-text" id="revealedText"></div>
+        <p style="font-size: 0.85rem; color: #2d3436;"><em>Onthoud dit goed of schrijf het op. Zodra je dit sluit, kun je het niet meer terugzien!</em></p>
+        <button class="close-btn" onclick="closeReveal()">Ik heb het genoteerd</button>
     </div>
 </div>
 
+<!-- Firebase SDK inladen via CDN -->
 <script type="module">
     import { initializeApp } from "https://gstatic.com";
     import { getDatabase, ref, onValue, runTransaction } from "https://gstatic.com";
-    import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged } from "https://gstatic.com";
 
-    // 1. PLAK HIER JOUW CONFIGURATIE (Zichtbaar in browser, maar beveiligd via Database Rules)
-const firebaseConfig = {
-  apiKey: "AIzaSyB7ZA9dBU8wAElR3rMt2Rf607sFsmR1WXI",
-  authDomain: "kerstlijstje-f45c3.firebaseapp.com",
-  projectId: "kerstlijstje-f45c3",
-  storageBucket: "kerstlijstje-f45c3.firebasestorage.app",
-  messagingSenderId: "1065905360166",
-  appId: "1:1065905360166:web:1bd05b667e4f6ae4f385e7"
-};
+    // 1. VERVANG DEZE GEGEVENS MET JOUW EIGEN FIREBASE CONFIGURATIE
+    const firebaseConfig = {
+        apiKey: "JOUW_API_KEY",
+        authDomain: "JOUW_://firebaseapp.com",
+        databaseURL: "https://JOUW_://firebaseio.com",
+        projectId: "JOUW_PROJECT",
+        storageBucket: "JOUW_://appspot.com",
+        messagingSenderId: "JOUW_ID",
+        appId: "JOUW_APP_ID"
+    };
 
+    // 2. Jouw geheime lijst met items
     const databaseLijst = [
         "Item A: Weekendje weg",
         "Item B: Luxe diner",
         "Item C: Bioscoopbon",
         "Item D: Dagje sauna",
-        "Item E: Parachutesprong"
+        "Item E: Parachutesprong",
+        "Item F: Kookworkshop",
+        "Item G: Concertkaartjes",
+        "Item H: Museumjaarkaart"
     ];
 
     // Initialiseer Firebase
     const app = initializeApp(firebaseConfig);
     const db = getDatabase(app);
-    const auth = getAuth(app);
     const geclaimdRef = ref(db, 'geclaimdeItems');
 
-    // DOM Elementen
-    const authSection = document.getElementById('authSection');
-    const mainApp = document.getElementById('mainApp');
     const buttonGrid = document.getElementById('buttonGrid');
     const revealBox = document.getElementById('revealBox');
     const revealedText = document.getElementById('revealedText');
-    const authError = document.getElementById('authError');
 
-    // --- AUTHENTICATIE LOGICA ---
-    
-    // Inloggen knop
-    document.getElementById('loginBtn').addEventListener('click', () => {
-        const email = document.getElementById('emailInput').value;
-        const password = document.getElementById('passwordInput').value;
-        
-        signInWithEmailAndPassword(auth, email, password)
-            .then(() => { authError.innerText = ""; })
-            .catch((error) => { authError.innerText = "Inloggen mislukt: " + error.message; });
+    // Luister live naar wijzigingen in de database
+    onValue(geclaimdRef, (snapshot) => {
+        const geclaimdeIndexen = snapshot.val() || [];
+        bouwLijst(geclaimdeIndexen);
     });
 
-    // Uitloggen knop
-    document.getElementById('logoutBtn').addEventListener('click', () => {
-        signOut(auth);
-    });
-
-    // Controleren of gebruiker ingelogd is of van status verandert
-    onAuthStateChanged(auth, (user) => {
-        if (user) {
-            // Gebruiker is ingelogd -> toon app, verberg login
-            authSection.style.display = 'none';
-            mainApp.style.display = 'block';
-            
-            // Start het live luisteren naar de database
-            onValue(geclaimdRef, (snapshot) => {
-                const geclaimdeIndexen = snapshot.val() || [];
-                bouwLijst(geclaimdeIndexen);
-            });
-        } else {
-            // Gebruiker is niet ingelogd -> toon login, verberg app
-            authSection.style.display = 'flex';
-            mainApp.style.display = 'none';
-            buttonGrid.innerHTML = '';
-        }
-    });
-
-    // --- LIJST LOGICA ---
     function bouwLijst(geclaimdeIndexen) {
         buttonGrid.innerHTML = '';
         databaseLijst.forEach((item, index) => {
@@ -240,19 +175,26 @@ const firebaseConfig = {
             } else {
                 btn.onclick = () => claimItem(index);
             }
+            
             buttonGrid.appendChild(btn);
         });
     }
 
     function claimItem(index) {
+        // Gebruik een transactie om te voorkomen dat twee mensen exact tegelijk hetzelfde item claimen
         runTransaction(geclaimdRef, (huidigeLijst) => {
             if (!huidigeLijst) huidigeLijst = [];
+            
+            // Als iemand anders net iets sneller was, breek de actie af
             if (huidigeLijst.includes(index)) {
-                alert("Helaas! Iemand anders was je net voor.");
+                alert("Helaas! Iemand anders was je net voor bij dit item.");
                 return huidigeLijst;
             }
+            
+            // Voeg de claim toe aan de database
             huidigeLijst.push(index);
             
+            // Toon het item *alleen* op het scherm van deze specifieke gebruiker
             revealedText.innerText = databaseLijst[index];
             revealBox.style.display = 'block';
             revealBox.scrollIntoView({ behavior: 'smooth' });
@@ -261,10 +203,12 @@ const firebaseConfig = {
         });
     }
 
+    // Maak de sluitfunctie wereldwijd beschikbaar voor de onclick in de HTML
     window.closeReveal = function() {
         revealBox.style.display = 'none';
         revealedText.innerText = '';
     }
 </script>
+
 </body>
 </html>

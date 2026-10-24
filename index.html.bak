@@ -156,6 +156,7 @@
 const firebaseConfig = {
   apiKey: "AIzaSyB7ZA9dBU8wAElR3rMt2Rf607sFsmR1WXI",
   authDomain: "kerstlijstje-f45c3.firebaseapp.com",
+  databaseURL: "https://kerstlijstje-f45c3-default-rtdb.europe-west1.firebasedatabase.app",
   projectId: "kerstlijstje-f45c3",
   storageBucket: "kerstlijstje-f45c3.firebasestorage.app",
   messagingSenderId: "1065905360166",

@@ -1,0 +1,485 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cadeautjes trekken</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=Figtree:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --snow: #F2F5F9;
+    --paper: #FFFFFF;
+    --ink: #17233B;
+    --ink-soft: #55627A;
+    --line: #D5DCE8;
+    --ribbon: #D62839;
+    --ribbon-dark: #A81C2B;
+    --gold: #F2B134;
+    --ok: #1F7A4D;
+    --radius: 14px;
+    --display: "Bricolage Grotesque", "Trebuchet MS", system-ui, sans-serif;
+    --body: "Figtree", system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0;
+    background: var(--snow);
+    color: var(--ink);
+    font-family: var(--body);
+    font-size: 17px;
+    line-height: 1.5;
+  }
+  main { max-width: 980px; margin: 0 auto; padding: 32px 20px 80px; }
+  h1, h2, h3 { font-family: var(--display); line-height: 1.1; margin: 0; letter-spacing: -0.01em; }
+  h1 { font-size: clamp(2.2rem, 6vw, 3.6rem); font-weight: 800; }
+  h2 { font-size: 1.6rem; font-weight: 700; }
+  p { margin: 0; }
+  .muted { color: var(--ink-soft); }
+  :focus-visible { outline: 3px solid var(--gold); outline-offset: 2px; }
+
+  /* Header */
+  .top { display: flex; justify-content: space-between; align-items: baseline; gap: 16px; flex-wrap: wrap; margin-bottom: 28px; }
+  .brand { font-family: var(--display); font-weight: 800; font-size: 1.15rem; color: var(--ribbon); }
+  .linklike { background: none; border: 0; padding: 0; font: inherit; color: var(--ink-soft); text-decoration: underline; cursor: pointer; }
+
+  /* Panels */
+  .panel { background: var(--paper); border: 1px solid var(--line); border-radius: var(--radius); padding: 28px; }
+  .intro { margin: 10px 0 24px; max-width: 56ch; color: var(--ink-soft); }
+
+  /* Form controls */
+  label { display: block; font-weight: 600; margin-bottom: 6px; }
+  input[type=text], input[type=number] {
+    width: 100%; font: inherit; color: var(--ink);
+    padding: 12px 14px; border: 1.5px solid var(--line); border-radius: 10px; background: #fff;
+  }
+  input:focus { border-color: var(--ink); outline: none; box-shadow: 0 0 0 3px rgba(242,177,52,.55); }
+  button.primary {
+    font: inherit; font-weight: 700; font-family: var(--display);
+    background: var(--ribbon); color: #fff; border: 0; border-radius: 10px;
+    padding: 13px 22px; cursor: pointer; font-size: 1.05rem;
+  }
+  button.primary:hover { background: var(--ribbon-dark); }
+  button.primary:disabled { opacity: .55; cursor: not-allowed; }
+
+  .gift-row { display: grid; grid-template-columns: 1fr 140px; gap: 12px; margin-bottom: 16px; }
+  .gift-row .price-wrap { position: relative; }
+  .gift-row .price-wrap span { position: absolute; left: 14px; top: 50%; transform: translateY(-50%); color: var(--ink-soft); pointer-events: none; }
+  .gift-row .price-wrap input { padding-left: 30px; }
+  .gift-row .row-label { grid-column: 1 / -1; margin-bottom: -6px; }
+  .hint { font-size: .92rem; color: var(--ink-soft); margin-top: 4px; }
+
+  /* Status */
+  .counter { display: flex; gap: 8px; align-items: center; margin: 14px 0 0; }
+  .pip { width: 14px; height: 14px; border-radius: 50%; border: 2px solid var(--ink); background: transparent; }
+  .pip.on { background: var(--ribbon); border-color: var(--ribbon); }
+
+  section.block { margin-top: 44px; }
+  section.block > .head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; margin-bottom: 16px; flex-wrap: wrap; }
+
+  /* Revealed picks */
+  .picks { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 16px; }
+  .pick {
+    background: var(--paper); border: 2px solid var(--gold); border-radius: var(--radius);
+    padding: 20px; display: flex; flex-direction: column; justify-content: space-between; gap: 18px; min-height: 130px;
+  }
+  .pick .t { font-family: var(--display); font-weight: 700; font-size: 1.25rem; line-height: 1.2; overflow-wrap: anywhere; }
+  .pick .p { font-weight: 600; color: var(--ok); }
+  .pick.reveal .t, .pick.reveal .p { animation: unblur .9s ease-out both; }
+  @keyframes unblur { from { filter: blur(12px); opacity: .2; } to { filter: blur(0); opacity: 1; } }
+
+  /* Blurred tiles */
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 14px; }
+  .tile {
+    position: relative; overflow: hidden; text-align: left; font: inherit; color: var(--ink);
+    background: var(--paper); border: 1.5px solid var(--line); border-radius: var(--radius);
+    padding: 18px; min-height: 130px; cursor: pointer;
+    transition: transform .15s ease, border-color .15s ease;
+  }
+  .tile:hover:not(:disabled) { transform: translateY(-3px); border-color: var(--ribbon); }
+  .tile:disabled { cursor: not-allowed; opacity: .55; }
+  .tile .fuzzy { filter: blur(7px); user-select: none; pointer-events: none; }
+  .tile .fuzzy .t { font-family: var(--display); font-weight: 700; font-size: 1.1rem; }
+  .tile .fuzzy .p { margin-top: 10px; font-weight: 600; }
+  .tile .tag {
+    position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%);
+    background: var(--ink); color: #fff; font-size: .82rem; font-weight: 600;
+    padding: 4px 12px; border-radius: 999px; white-space: nowrap;
+  }
+  .tile.busy { opacity: .6; pointer-events: none; }
+
+  .empty { padding: 28px; border: 2px dashed var(--line); border-radius: var(--radius); color: var(--ink-soft); text-align: center; }
+
+  /* Toast */
+  #toast {
+    position: fixed; left: 50%; bottom: 24px; transform: translate(-50%, 20px); opacity: 0;
+    background: var(--ink); color: #fff; padding: 12px 20px; border-radius: 10px; max-width: min(92vw, 460px);
+    transition: opacity .2s ease, transform .2s ease; pointer-events: none; z-index: 10;
+  }
+  #toast.show { opacity: 1; transform: translate(-50%, 0); }
+  #toast.error { background: var(--ribbon-dark); }
+
+  .setup-warning { background: #FFF4D6; border: 1.5px solid var(--gold); border-radius: var(--radius); padding: 16px 20px; margin-bottom: 20px; }
+
+  @media (max-width: 520px) {
+    .gift-row { grid-template-columns: 1fr; }
+    .panel { padding: 20px; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    * { animation: none !important; transition: none !important; }
+  }
+</style>
+</head>
+<body>
+<main>
+  <div class="top">
+    <span class="brand">Cadeautjes trekken</span>
+    <span id="whoami"></span>
+  </div>
+  <div id="app"></div>
+</main>
+<div id="toast" role="status" aria-live="polite"></div>
+
+<script type="module">
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+  import {
+    getFirestore, doc, getDoc, setDoc, collection, onSnapshot,
+    writeBatch, runTransaction, serverTimestamp
+  } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+
+  // ─────────────────────────────────────────────────────────────
+  // 1. Plak hier jouw Firebase-configuratie
+  //    (Firebase console → Projectinstellingen → Je apps → Web-app)
+  // ─────────────────────────────────────────────────────────────
+const firebaseConfig = {
+  apiKey: "AIzaSyB7ZA9dBU8wAElR3rMt2Rf607sFsmR1WXI",
+  authDomain: "kerstlijstje-f45c3.firebaseapp.com",
+  databaseURL: "https://kerstlijstje-f45c3-default-rtdb.europe-west1.firebasedatabase.app",
+  projectId: "kerstlijstje-f45c3",
+  storageBucket: "kerstlijstje-f45c3.firebasestorage.app",
+  messagingSenderId: "1065905360166",
+  appId: "1:1065905360166:web:1bd05b667e4f6ae4f385e7"
+};
+
+  const MIN_PRICE = 10;
+  const MAX_PRICE = 25;
+  const ITEMS_TO_SUBMIT = 5;
+  const ITEMS_TO_PICK = 3;
+
+  const app = document.getElementById("app");
+  const whoami = document.getElementById("whoami");
+  const toastEl = document.getElementById("toast");
+
+  const configured = !firebaseConfig.apiKey.startsWith("JOUW_");
+  let db = null;
+  if (configured) {
+    db = getFirestore(initializeApp(firebaseConfig));
+  }
+
+  // ── State ────────────────────────────────────────────────────
+  let me = null;               // { id, name }
+  let myDoc = null;            // participants/{id}
+  let items = [];              // alle items
+  let unsubs = [];
+  let currentView = null;
+  let busyItem = null;
+  const seenPicks = new Set();
+  let firstPickRender = true;
+
+  // ── Helpers ──────────────────────────────────────────────────
+  const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  const euro = (n) => "€ " + Number(n).toFixed(2).replace(".", ",");
+  const slug = (name) => name.trim().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+
+  function hash(str) {
+    let h = 2166136261;
+    for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 16777619); }
+    return h >>> 0;
+  }
+
+  let toastTimer;
+  function toast(msg, isError = false) {
+    toastEl.textContent = msg;
+    toastEl.className = "show" + (isError ? " error" : "");
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => { toastEl.className = ""; }, 4200);
+  }
+
+  // Neutrale vulteksten: de echte tekst komt pas in de pagina nadat het item is gekozen
+  const FILLER = [
+    "Een leuk cadeau om uit te pakken",
+    "Verrassing voor jou",
+    "Nog even geheim houden",
+    "Wat zou hier staan",
+    "Pak maar uit",
+    "Een cadeautje met een mysterie"
+  ];
+
+  // ── Start ────────────────────────────────────────────────────
+  function boot() {
+    if (!configured) {
+      app.innerHTML = `
+        <div class="setup-warning">
+          <strong>Firebase is nog niet gekoppeld.</strong>
+          Vul bovenin dit bestand je <code>firebaseConfig</code> in en laad de pagina opnieuw.
+        </div>`;
+      return;
+    }
+    const saved = localStorage.getItem("cadeautjes-me");
+    if (saved) {
+      try { me = JSON.parse(saved); } catch { me = null; }
+    }
+    if (me && me.id) startSession(); else renderLogin();
+  }
+
+  // ── Stap 1: naam ─────────────────────────────────────────────
+  function renderLogin() {
+    currentView = "login";
+    whoami.innerHTML = "";
+    app.innerHTML = `
+      <h1>Wie doet er mee?</h1>
+      <p class="intro">Vul je naam in. Daarna kies je vijf cadeautjes die jij zelf graag zou krijgen en trek je blind drie cadeautjes van anderen.</p>
+      <form class="panel" id="login-form" novalidate>
+        <label for="name">Je naam</label>
+        <input id="name" type="text" maxlength="40" autocomplete="given-name" required>
+        <p class="hint">Kom je terug? Vul dezelfde naam in, dan ga je verder waar je was.</p>
+        <p style="margin-top:20px"><button class="primary" type="submit">Doe mee</button></p>
+      </form>`;
+    document.getElementById("name").focus();
+    document.getElementById("login-form").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const name = document.getElementById("name").value.trim();
+      const id = slug(name);
+      if (!id) { toast("Vul een naam in met minstens één letter of cijfer.", true); return; }
+      const btn = e.target.querySelector("button");
+      btn.disabled = true;
+      try {
+        const ref = doc(db, "participants", id);
+        const snap = await getDoc(ref);
+        if (!snap.exists()) {
+          await setDoc(ref, { name, submitted: false, picks: [], createdAt: serverTimestamp() });
+        }
+        me = { id, name: snap.exists() ? snap.data().name : name };
+        localStorage.setItem("cadeautjes-me", JSON.stringify(me));
+        startSession();
+      } catch (err) {
+        console.error(err);
+        toast("Opslaan lukt niet. Controleer je Firebase-configuratie en regels.", true);
+        btn.disabled = false;
+      }
+    });
+  }
+
+  function startSession() {
+    unsubs.forEach((u) => u());
+    unsubs = [];
+    myDoc = null;
+    items = [];
+    currentView = null;
+    seenPicks.clear();
+    firstPickRender = true;
+
+    whoami.innerHTML = `<span class="muted">${esc(me.name)}</span> · <button class="linklike" id="switch">Niet jij?</button>`;
+    document.getElementById("switch").addEventListener("click", () => {
+      unsubs.forEach((u) => u());
+      unsubs = [];
+      localStorage.removeItem("cadeautjes-me");
+      me = null;
+      renderLogin();
+    });
+
+    unsubs.push(onSnapshot(doc(db, "participants", me.id), (snap) => {
+      myDoc = snap.exists() ? snap.data() : null;
+      update();
+    }, onListenError));
+    unsubs.push(onSnapshot(collection(db, "items"), (snap) => {
+      items = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      update();
+    }, onListenError));
+  }
+
+  function onListenError(err) {
+    console.error(err);
+    toast("Verbinding met de database mislukt.", true);
+  }
+
+  function update() {
+    if (!me || !myDoc) return;
+    if (!myDoc.submitted) {
+      if (currentView !== "form") renderForm(); // niet opnieuw tekenen: voorkomt dat getypte tekst verdwijnt
+    } else {
+      renderPick();
+    }
+  }
+
+  // ── Stap 2: vijf cadeaus invoeren ────────────────────────────
+  function renderForm() {
+    currentView = "form";
+    let rows = "";
+    for (let i = 1; i <= ITEMS_TO_SUBMIT; i++) {
+      rows += `
+        <div class="gift-row">
+          <label class="row-label" for="t${i}">Cadeau ${i}</label>
+          <input id="t${i}" type="text" maxlength="90" placeholder="Bijvoorbeeld: een goede thermosfles" required>
+          <div class="price-wrap">
+            <span aria-hidden="true">€</span>
+            <input id="p${i}" type="number" inputmode="decimal" min="${MIN_PRICE}" max="${MAX_PRICE}" step="0.5" placeholder="${MIN_PRICE}–${MAX_PRICE}" aria-label="Prijs cadeau ${i} in euro" required>
+          </div>
+        </div>`;
+    }
+    app.innerHTML = `
+      <h1>Wat zou jij graag krijgen, ${esc(me.name)}?</h1>
+      <p class="intro">Voer ${ITEMS_TO_SUBMIT} cadeautjes in met een prijs tussen € ${MIN_PRICE} en € ${MAX_PRICE}. Anderen zien alleen de tekst als zij jouw cadeau trekken, niet van wie het komt. Je kunt deze lijst achteraf niet meer aanpassen.</p>
+      <form class="panel" id="gift-form" novalidate>
+        ${rows}
+        <p><button class="primary" type="submit">Cadeaus opslaan</button></p>
+      </form>`;
+    document.getElementById("t1").focus();
+
+    document.getElementById("gift-form").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const entries = [];
+      for (let i = 1; i <= ITEMS_TO_SUBMIT; i++) {
+        const text = document.getElementById("t" + i).value.trim();
+        const price = parseFloat(String(document.getElementById("p" + i).value).replace(",", "."));
+        if (!text) { toast(`Cadeau ${i}: beschrijf het cadeau.`, true); document.getElementById("t" + i).focus(); return; }
+        if (!Number.isFinite(price) || price < MIN_PRICE || price > MAX_PRICE) {
+          toast(`Cadeau ${i}: de prijs moet tussen € ${MIN_PRICE} en € ${MAX_PRICE} liggen.`, true);
+          document.getElementById("p" + i).focus();
+          return;
+        }
+        entries.push({ text, price: Math.round(price * 100) / 100 });
+      }
+      const btn = e.target.querySelector("button[type=submit]");
+      btn.disabled = true;
+      try {
+        const batch = writeBatch(db);
+        entries.forEach((en) => {
+          const ref = doc(collection(db, "items"));
+          batch.set(ref, {
+            text: en.text,
+            price: en.price,
+            ownerId: me.id,
+            ownerName: me.name,
+            claimedById: null,
+            claimedByName: null,
+            claimedAt: null,
+            createdAt: serverTimestamp()
+          });
+        });
+        batch.set(doc(db, "participants", me.id), { submitted: true, submittedAt: serverTimestamp() }, { merge: true });
+        await batch.commit();
+        toast("Je cadeaus zijn opgeslagen.");
+      } catch (err) {
+        console.error(err);
+        toast("Opslaan mislukt. Probeer het opnieuw.", true);
+        btn.disabled = false;
+      }
+    });
+  }
+
+  // ── Stap 3: blind kiezen ─────────────────────────────────────
+  function renderPick() {
+    const picked = myDoc.picks || [];
+    const done = picked.length >= ITEMS_TO_PICK;
+
+    const myPicks = items.filter((it) => it.claimedById === me.id);
+    const available = items
+      .filter((it) => it.ownerId !== me.id && !it.claimedById)
+      .sort((a, b) => hash(a.id + me.id) - hash(b.id + me.id));
+
+    const pips = Array.from({ length: ITEMS_TO_PICK }, (_, i) => `<span class="pip ${i < picked.length ? "on" : ""}"></span>`).join("");
+
+    let picksHtml = "";
+    if (myPicks.length) {
+      picksHtml = `<div class="picks">` + myPicks.map((it) => {
+        const isNew = !seenPicks.has(it.id) && !firstPickRender;
+        seenPicks.add(it.id);
+        return `<article class="pick ${isNew ? "reveal" : ""}">
+          <div class="t">${esc(it.text)}</div>
+          <div class="p">${euro(it.price)}</div>
+        </article>`;
+      }).join("") + `</div>`;
+    }
+    firstPickRender = false;
+
+    let gridHtml;
+    if (done) {
+      gridHtml = `<div class="empty">Je hebt al je ${ITEMS_TO_PICK} cadeaus gekozen. Fijne feestdagen!</div>`;
+    } else if (!available.length) {
+      gridHtml = `<div class="empty">Er zijn nu geen cadeaus meer beschikbaar. Zodra anderen hun lijst invullen verschijnen ze hier vanzelf.</div>`;
+    } else {
+      gridHtml = `<div class="grid">` + available.map((it, i) => {
+        const filler = FILLER[hash(it.id) % FILLER.length];
+        return `<button class="tile ${busyItem === it.id ? "busy" : ""}" data-id="${esc(it.id)}" aria-label="Onthul een cadeau">
+          <div class="fuzzy" aria-hidden="true">
+            <div class="t">${esc(filler)}</div>
+            <div class="p">€ 00,00</div>
+          </div>
+          <span class="tag">Tik om te onthullen</span>
+        </button>`;
+      }).join("") + `</div>`;
+    }
+
+    app.innerHTML = `
+      <h1>${done ? "Jouw cadeaus" : "Kies blind"}</h1>
+      <p class="intro">${done
+        ? "Dit zijn de drie cadeaus die jij hebt getrokken."
+        : `Tik op een vervaagd cadeau om te zien wat het is. Elk cadeau kan maar één keer gekozen worden en je keuze staat vast. Je mag er ${ITEMS_TO_PICK} kiezen.`}</p>
+      <div class="counter" aria-label="${picked.length} van ${ITEMS_TO_PICK} gekozen">${pips}<span class="muted" style="margin-left:6px">${picked.length} van ${ITEMS_TO_PICK} gekozen</span></div>
+
+      ${myPicks.length ? `<section class="block"><div class="head"><h2>Jouw gekozen cadeaus</h2></div>${picksHtml}</section>` : ""}
+
+      <section class="block">
+        <div class="head">
+          <h2>${done ? "Overige cadeaus" : "Beschikbaar"}</h2>
+          <span class="muted">${available.length} nog te kiezen</span>
+        </div>
+        ${gridHtml}
+      </section>`;
+
+    app.querySelectorAll(".tile").forEach((btn) => btn.addEventListener("click", () => claim(btn.dataset.id)));
+  }
+
+  async function claim(itemId) {
+    if (busyItem) return;
+    busyItem = itemId;
+    renderPick();
+    try {
+      await runTransaction(db, async (tx) => {
+        const itemRef = doc(db, "items", itemId);
+        const meRef = doc(db, "participants", me.id);
+        const itemSnap = await tx.get(itemRef);
+        const meSnap = await tx.get(meRef);
+
+        if (!itemSnap.exists()) throw new Error("Dit cadeau bestaat niet meer.");
+        const item = itemSnap.data();
+        const mine = meSnap.data() || {};
+        const picks = mine.picks || [];
+
+        if (item.ownerId === me.id) throw new Error("Je kunt je eigen cadeau niet kiezen.");
+        if (item.claimedById) throw new Error("Net te laat: iemand anders heeft dit cadeau zojuist gekozen.");
+        if (picks.length >= ITEMS_TO_PICK) throw new Error(`Je hebt al ${ITEMS_TO_PICK} cadeaus gekozen.`);
+
+        tx.update(itemRef, {
+          claimedById: me.id,
+          claimedByName: me.name,
+          claimedAt: serverTimestamp()
+        });
+        tx.update(meRef, { picks: [...picks, itemId] });
+      });
+    } catch (err) {
+      console.error(err);
+      toast(err.message || "Kiezen mislukt. Probeer het opnieuw.", true);
+    } finally {
+      busyItem = null;
+      if (myDoc && myDoc.submitted) renderPick();
+    }
+  }
+
+  boot();
+</script>
+</body>
+</html>

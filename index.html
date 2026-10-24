@@ -86,6 +86,8 @@
     padding: 20px; display: flex; flex-direction: column; justify-content: space-between; gap: 18px; min-height: 130px;
   }
   .pick .t { font-family: var(--display); font-weight: 700; font-size: 1.25rem; line-height: 1.2; overflow-wrap: anywhere; }
+  .pick .for { font-size: .95rem; color: var(--ink-soft); }
+  .pick .for strong { color: var(--ink); }
   .pick .p { font-weight: 600; color: var(--ok); }
   .pick.reveal .t, .pick.reveal .p { animation: unblur .9s ease-out both; }
   @keyframes unblur { from { filter: blur(12px); opacity: .2; } to { filter: blur(0); opacity: 1; } }
@@ -121,6 +123,18 @@
   #toast.show { opacity: 1; transform: translate(-50%, 0); }
   #toast.error { background: var(--ribbon-dark); }
 
+  /* Beheerder */
+  .table-wrap { overflow-x: auto; background: var(--paper); border: 1px solid var(--line); border-radius: var(--radius); }
+  table { border-collapse: collapse; width: 100%; font-size: .95rem; }
+  th, td { text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { font-family: var(--display); font-weight: 700; background: var(--snow); white-space: nowrap; }
+  tr:last-child td { border-bottom: 0; }
+  td ul { margin: 0; padding-left: 18px; }
+  .danger { font: inherit; font-weight: 600; color: var(--ribbon-dark); background: none; border: 1.5px solid var(--ribbon); border-radius: 8px; padding: 4px 10px; cursor: pointer; white-space: nowrap; }
+  .danger:hover { background: var(--ribbon); color: #fff; }
+  .stats { display: flex; gap: 24px; flex-wrap: wrap; margin-top: 14px; }
+  .stats strong { font-family: var(--display); font-size: 1.5rem; }
+
   .setup-warning { background: #FFF4D6; border: 1.5px solid var(--gold); border-radius: var(--radius); padding: 16px 20px; margin-bottom: 20px; }
 
   @media (max-width: 520px) {
@@ -146,7 +160,7 @@
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
   import {
     getFirestore, doc, getDoc, setDoc, collection, onSnapshot,
-    writeBatch, runTransaction, serverTimestamp
+    writeBatch, runTransaction, serverTimestamp, arrayRemove
   } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 
   // ─────────────────────────────────────────────────────────────
@@ -156,7 +170,6 @@
 const firebaseConfig = {
   apiKey: "AIzaSyB7ZA9dBU8wAElR3rMt2Rf607sFsmR1WXI",
   authDomain: "kerstlijstje-f45c3.firebaseapp.com",
-  databaseURL: "https://kerstlijstje-f45c3-default-rtdb.europe-west1.firebasedatabase.app",
   projectId: "kerstlijstje-f45c3",
   storageBucket: "kerstlijstje-f45c3.firebasestorage.app",
   messagingSenderId: "1065905360166",
@@ -231,7 +244,9 @@ const firebaseConfig = {
     if (saved) {
       try { me = JSON.parse(saved); } catch { me = null; }
     }
-    if (me && me.id) startSession(); else renderLogin();
+    if (me && me.admin) startAdmin();
+    else if (me && me.id) startSession();
+    else renderLogin();
   }
 
   // ── Stap 1: naam ─────────────────────────────────────────────
@@ -253,6 +268,12 @@ const firebaseConfig = {
       const name = document.getElementById("name").value.trim();
       const id = slug(name);
       if (!id) { toast("Vul een naam in met minstens één letter of cijfer.", true); return; }
+      if (id === "beheerder") {
+        me = { id, name: "Beheerder", admin: true };
+        localStorage.setItem("cadeautjes-me", JSON.stringify(me));
+        startAdmin();
+        return;
+      }
       const btn = e.target.querySelector("button");
       btn.disabled = true;
       try {
@@ -331,7 +352,7 @@ const firebaseConfig = {
     }
     app.innerHTML = `
       <h1>Wat zou jij graag krijgen, ${esc(me.name)}?</h1>
-      <p class="intro">Voer ${ITEMS_TO_SUBMIT} cadeautjes in met een prijs tussen € ${MIN_PRICE} en € ${MAX_PRICE}. Anderen zien alleen de tekst als zij jouw cadeau trekken, niet van wie het komt. Je kunt deze lijst achteraf niet meer aanpassen.</p>
+      <p class="intro">Voer ${ITEMS_TO_SUBMIT} cadeautjes in met een prijs tussen € ${MIN_PRICE} en € ${MAX_PRICE}. Wie jouw cadeau trekt, ziet dat het van jou komt en koopt het voor je. Je kunt deze lijst achteraf niet meer aanpassen.</p>
       <form class="panel" id="gift-form" novalidate>
         ${rows}
         <p><button class="primary" type="submit">Cadeaus opslaan</button></p>
@@ -399,7 +420,10 @@ const firebaseConfig = {
         seenPicks.add(it.id);
         return `<article class="pick ${isNew ? "reveal" : ""}">
           <div class="t">${esc(it.text)}</div>
-          <div class="p">${euro(it.price)}</div>
+          <div>
+            <div class="for">Cadeau voor <strong>${esc(it.ownerName)}</strong></div>
+            <div class="p">${euro(it.price)}</div>
+          </div>
         </article>`;
       }).join("") + `</div>`;
     }
@@ -426,8 +450,8 @@ const firebaseConfig = {
     app.innerHTML = `
       <h1>${done ? "Jouw cadeaus" : "Kies blind"}</h1>
       <p class="intro">${done
-        ? "Dit zijn de drie cadeaus die jij hebt getrokken."
-        : `Tik op een vervaagd cadeau om te zien wat het is. Elk cadeau kan maar één keer gekozen worden en je keuze staat vast. Je mag er ${ITEMS_TO_PICK} kiezen.`}</p>
+        ? "Dit zijn de cadeaus die jij hebt getrokken, met erbij voor wie je ze koopt."
+        : `Tik op een vervaagd cadeau om te zien wat het is en voor wie je het koopt. Elk cadeau kan maar één keer gekozen worden en je keuze staat vast. Je mag er ${ITEMS_TO_PICK} kiezen.`}</p>
       <div class="counter" aria-label="${picked.length} van ${ITEMS_TO_PICK} gekozen">${pips}<span class="muted" style="margin-left:6px">${picked.length} van ${ITEMS_TO_PICK} gekozen</span></div>
 
       ${myPicks.length ? `<section class="block"><div class="head"><h2>Jouw gekozen cadeaus</h2></div>${picksHtml}</section>` : ""}
@@ -476,6 +500,131 @@ const firebaseConfig = {
     } finally {
       busyItem = null;
       if (myDoc && myDoc.submitted) renderPick();
+    }
+  }
+
+  // ── Beheerder ────────────────────────────────────────────────
+  let participants = [];
+
+  function startAdmin() {
+    unsubs.forEach((u) => u());
+    unsubs = [];
+    items = [];
+    participants = [];
+    currentView = "admin";
+    whoami.innerHTML = `<span class="muted">Beheerder</span> · <button class="linklike" id="switch">Uitloggen</button>`;
+    document.getElementById("switch").addEventListener("click", () => {
+      unsubs.forEach((u) => u());
+      unsubs = [];
+      localStorage.removeItem("cadeautjes-me");
+      me = null;
+      renderLogin();
+    });
+    unsubs.push(onSnapshot(collection(db, "participants"), (snap) => {
+      participants = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      renderAdmin();
+    }, onListenError));
+    unsubs.push(onSnapshot(collection(db, "items"), (snap) => {
+      items = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      renderAdmin();
+    }, onListenError));
+  }
+
+  function renderAdmin() {
+    if (!me || !me.admin) return;
+    const byName = (a, b) => String(a.name || a.ownerName || "").localeCompare(String(b.name || b.ownerName || ""), "nl");
+    const people = [...participants].sort(byName);
+    const allItems = [...items].sort((a, b) => byName(a, b) || String(a.text).localeCompare(String(b.text), "nl"));
+    const claimedCount = items.filter((i) => i.claimedById).length;
+
+    const peopleRows = people.map((p) => {
+      const given = items.filter((i) => i.ownerId === p.id);
+      const chosen = items.filter((i) => i.claimedById === p.id);
+      return `<tr>
+        <td><strong>${esc(p.name)}</strong>${p.submitted ? "" : `<br><span class="muted">nog geen cadeaus ingevoerd</span>`}</td>
+        <td>${given.length ? `<ul>${given.map((i) => `<li>${esc(i.text)} (${euro(i.price)})${i.claimedByName ? ` <span class="muted">→ gekozen door ${esc(i.claimedByName)}</span>` : ""}</li>`).join("")}</ul>` : `<span class="muted">geen</span>`}</td>
+        <td>${chosen.length ? `<ul>${chosen.map((i) => `<li>${esc(i.text)} <span class="muted">← van ${esc(i.ownerName)}</span></li>`).join("")}</ul>` : `<span class="muted">geen</span>`}</td>
+        <td><button class="danger" data-del-user="${esc(p.id)}">Verwijder</button></td>
+      </tr>`;
+    }).join("");
+
+    const itemRows = allItems.map((i) => `<tr>
+      <td>${esc(i.text)}</td>
+      <td>${euro(i.price)}</td>
+      <td>${esc(i.ownerName)}</td>
+      <td>${i.claimedByName ? esc(i.claimedByName) : `<span class="muted">nog niet gekozen</span>`}</td>
+      <td><button class="danger" data-del-item="${esc(i.id)}">Verwijder</button></td>
+    </tr>`).join("");
+
+    app.innerHTML = `
+      <h1>Beheer</h1>
+      <div class="stats">
+        <span><strong>${participants.length}</strong> deelnemers</span>
+        <span><strong>${items.length}</strong> cadeaus</span>
+        <span><strong>${claimedCount}</strong> gekozen</span>
+      </div>
+
+      <section class="block">
+        <div class="head"><h2>Deelnemers</h2></div>
+        <div class="table-wrap"><table>
+          <thead><tr><th>Naam</th><th>Heeft aangedragen</th><th>Heeft gekozen</th><th></th></tr></thead>
+          <tbody>${peopleRows || `<tr><td colspan="4" class="muted">Nog geen deelnemers.</td></tr>`}</tbody>
+        </table></div>
+      </section>
+
+      <section class="block">
+        <div class="head"><h2>Alle cadeaus</h2></div>
+        <div class="table-wrap"><table>
+          <thead><tr><th>Cadeau</th><th>Prijs</th><th>Aangedragen door</th><th>Gekozen door</th><th></th></tr></thead>
+          <tbody>${itemRows || `<tr><td colspan="5" class="muted">Nog geen cadeaus.</td></tr>`}</tbody>
+        </table></div>
+      </section>`;
+
+    app.querySelectorAll("[data-del-user]").forEach((b) => b.addEventListener("click", () => deleteUser(b.dataset.delUser)));
+    app.querySelectorAll("[data-del-item]").forEach((b) => b.addEventListener("click", () => deleteItem(b.dataset.delItem)));
+  }
+
+  async function deleteItem(itemId) {
+    const it = items.find((i) => i.id === itemId);
+    if (!it) return;
+    if (!confirm(`Cadeau "${it.text}" van ${it.ownerName} verwijderen?` + (it.claimedByName ? `\n\n${it.claimedByName} had dit gekozen en mag daarna een nieuw cadeau kiezen.` : ""))) return;
+    try {
+      const batch = writeBatch(db);
+      batch.delete(doc(db, "items", itemId));
+      if (it.claimedById) batch.update(doc(db, "participants", it.claimedById), { picks: arrayRemove(itemId) });
+      await batch.commit();
+      toast("Cadeau verwijderd.");
+    } catch (err) {
+      console.error(err);
+      toast("Verwijderen mislukt.", true);
+    }
+  }
+
+  async function deleteUser(userId) {
+    const p = participants.find((x) => x.id === userId);
+    if (!p) return;
+    const owned = items.filter((i) => i.ownerId === userId);
+    const chosen = items.filter((i) => i.claimedById === userId);
+    if (!confirm(`${p.name} verwijderen?\n\n- ${owned.length} aangedragen cadeaus worden ook verwijderd\n- ${chosen.length} gekozen cadeaus komen weer vrij`)) return;
+    try {
+      const batch = writeBatch(db);
+      batch.delete(doc(db, "participants", userId));
+      owned.forEach((it) => {
+        batch.delete(doc(db, "items", it.id));
+        if (it.claimedById && it.claimedById !== userId) {
+          batch.update(doc(db, "participants", it.claimedById), { picks: arrayRemove(it.id) });
+        }
+      });
+      chosen.forEach((it) => {
+        if (it.ownerId !== userId) {
+          batch.update(doc(db, "items", it.id), { claimedById: null, claimedByName: null, claimedAt: null });
+        }
+      });
+      await batch.commit();
+      toast(`${p.name} is verwijderd.`);
+    } catch (err) {
+      console.error(err);
+      toast("Verwijderen mislukt.", true);
     }
   }
 

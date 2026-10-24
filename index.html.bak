@@ -153,14 +153,14 @@
   // 1. Plak hier jouw Firebase-configuratie
   //    (Firebase console → Projectinstellingen → Je apps → Web-app)
   // ─────────────────────────────────────────────────────────────
-  const firebaseConfig = {
-    apiKey: "JOUW_API_KEY",
-    authDomain: "JOUW_PROJECT.firebaseapp.com",
-    projectId: "JOUW_PROJECT",
-    storageBucket: "JOUW_PROJECT.appspot.com",
-    messagingSenderId: "000000000000",
-    appId: "JOUW_APP_ID"
-  };
+const firebaseConfig = {
+  apiKey: "AIzaSyB7ZA9dBU8wAElR3rMt2Rf607sFsmR1WXI",
+  authDomain: "kerstlijstje-f45c3.firebaseapp.com",
+  projectId: "kerstlijstje-f45c3",
+  storageBucket: "kerstlijstje-f45c3.firebasestorage.app",
+  messagingSenderId: "1065905360166",
+  appId: "1:1065905360166:web:1bd05b667e4f6ae4f385e7"
+};
 
   const MIN_PRICE = 10;
   const MAX_PRICE = 25;

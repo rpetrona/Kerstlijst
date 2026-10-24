@@ -1,0 +1,213 @@
+html
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Live Blinde Verassingslijst</title>
+    <style>
+        :root {
+            --bg-color: #f4f7f6;
+            --card-color: #ffffff;
+            --primary-color: #6c5ce7;
+            --text-color: #2d3436;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            margin: 0;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        .container {
+            max-width: 600px;
+            width: 100%;
+            background: var(--card-color);
+            padding: 30px;
+            border-radius: 12px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.05);
+        }
+
+        h1 {
+            text-align: center;
+            color: var(--primary-color);
+            margin-bottom: 30px;
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+            gap: 15px;
+            margin-bottom: 30px;
+        }
+
+        .blind-item {
+            background: var(--primary-color);
+            color: white;
+            border: none;
+            padding: 20px 10px;
+            font-size: 1.1rem;
+            font-weight: bold;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: transform 0.2s, background-color 0.2s;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+
+        .blind-item:hover {
+            transform: translateY(-2px);
+            background-color: #5b4bc4;
+        }
+
+        .blind-item:disabled {
+            background-color: #b2bec3;
+            cursor: not-allowed;
+            transform: none;
+            box-shadow: none;
+        }
+
+        .reveal-box {
+            background: #ffeaa7;
+            border: 2px dashed #fdcb6e;
+            padding: 20px;
+            border-radius: 8px;
+            text-align: center;
+            margin-top: 20px;
+            display: none;
+        }
+
+        .reveal-box h2 {
+            margin-top: 0;
+            font-size: 1.2rem;
+            color: #d63031;
+        }
+
+        .revealed-text {
+            font-size: 1.5rem;
+            font-weight: bold;
+            margin: 15px 0;
+        }
+
+        .close-btn {
+            background: var(--text-color);
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h1>Live Blinde Verassingslijst 🌐</h1>
+    <p style="text-align: center; color: #636e72;">Kies een optie. Zodra je klikt, wordt dit item wereldwijd voor iedereen vergrendeld en zie jij als enige de inhoud.</p>
+    
+    <div class="grid" id="buttonGrid"></div>
+
+    <div class="reveal-box" id="revealBox">
+        <h2>Jouw geheime item:</h2>
+        <div class="revealed-text" id="revealedText"></div>
+        <p style="font-size: 0.85rem; color: #2d3436;"><em>Onthoud dit goed of schrijf het op. Zodra je dit sluit, kun je het niet meer terugzien!</em></p>
+        <button class="close-btn" onclick="closeReveal()">Ik heb het genoteerd</button>
+    </div>
+</div>
+
+<!-- Firebase SDK inladen via CDN -->
+<script type="module">
+    import { initializeApp } from "https://gstatic.com";
+    import { getDatabase, ref, onValue, runTransaction } from "https://gstatic.com";
+
+    // 1. VERVANG DEZE GEGEVENS MET JOUW EIGEN FIREBASE CONFIGURATIE
+	const firebaseConfig = {
+		  apiKey: "AIzaSyB7ZA9dBU8wAElR3rMt2Rf607sFsmR1WXI",
+		  authDomain: "kerstlijstje-f45c3.firebaseapp.com",
+		  projectId: "kerstlijstje-f45c3",
+		  storageBucket: "kerstlijstje-f45c3.firebasestorage.app",
+		  messagingSenderId: "1065905360166",
+		  appId: "1:1065905360166:web:1bd05b667e4f6ae4f385e7"
+};
+
+    // 2. Jouw geheime lijst met items
+    const databaseLijst = [
+        "Item A: Weekendje weg",
+        "Item B: Luxe diner",
+        "Item C: Bioscoopbon",
+        "Item D: Dagje sauna",
+        "Item E: Parachutesprong",
+        "Item F: Kookworkshop",
+        "Item G: Concertkaartjes",
+        "Item H: Museumjaarkaart"
+    ];
+
+    // Initialiseer Firebase
+    const app = initializeApp(firebaseConfig);
+    const db = getDatabase(app);
+    const geclaimdRef = ref(db, 'geclaimdeItems');
+
+    const buttonGrid = document.getElementById('buttonGrid');
+    const revealBox = document.getElementById('revealBox');
+    const revealedText = document.getElementById('revealedText');
+
+    // Luister live naar wijzigingen in de database
+    onValue(geclaimdRef, (snapshot) => {
+        const geclaimdeIndexen = snapshot.val() || [];
+        bouwLijst(geclaimdeIndexen);
+    });
+
+    function bouwLijst(geclaimdeIndexen) {
+        buttonGrid.innerHTML = '';
+        databaseLijst.forEach((item, index) => {
+            const btn = document.createElement('button');
+            btn.className = 'blind-item';
+            btn.innerText = `Optie ${index + 1}`;
+            
+            if (geclaimdeIndexen.includes(index)) {
+                btn.innerText = "Geclaimd 🔒";
+                btn.disabled = true;
+            } else {
+                btn.onclick = () => claimItem(index);
+            }
+            
+            buttonGrid.appendChild(btn);
+        });
+    }
+
+    function claimItem(index) {
+        // Gebruik een transactie om te voorkomen dat twee mensen exact tegelijk hetzelfde item claimen
+        runTransaction(geclaimdRef, (huidigeLijst) => {
+            if (!huidigeLijst) huidigeLijst = [];
+            
+            // Als iemand anders net iets sneller was, breek de actie af
+            if (huidigeLijst.includes(index)) {
+                alert("Helaas! Iemand anders was je net voor bij dit item.");
+                return huidigeLijst;
+            }
+            
+            // Voeg de claim toe aan de database
+            huidigeLijst.push(index);
+            
+            // Toon het item *alleen* op het scherm van deze specifieke gebruiker
+            revealedText.innerText = databaseLijst[index];
+            revealBox.style.display = 'block';
+            revealBox.scrollIntoView({ behavior: 'smooth' });
+
+            return huidigeLijst;
+        });
+    }
+
+    // Maak de sluitfunctie wereldwijd beschikbaar voor de onclick in de HTML
+    window.closeReveal = function() {
+        revealBox.style.display = 'none';
+        revealedText.innerText = '';
+    }
+</script>
+
+</body>
+</html>

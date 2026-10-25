@@ -128,6 +128,9 @@
   .pick .buy { display: inline-block; margin-top: 8px; font-weight: 600; color: var(--ribbon-dark); }
 
   /* Beheerder */
+  .phase { display: flex; justify-content: space-between; align-items: center; gap: 16px; flex-wrap: wrap; margin-bottom: 8px; }
+  button.secondary { font: inherit; font-weight: 600; background: var(--paper); color: var(--ink); border: 1.5px solid var(--ink); border-radius: 10px; padding: 10px 16px; cursor: pointer; white-space: nowrap; }
+  button.secondary:hover { background: var(--ink); color: #fff; }
   .table-wrap { overflow-x: auto; background: var(--paper); border: 1px solid var(--line); border-radius: var(--radius); }
   table { border-collapse: collapse; width: 100%; font-size: .95rem; }
   th, td { text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--line); vertical-align: top; }
@@ -167,19 +170,16 @@
     writeBatch, runTransaction, serverTimestamp, arrayRemove
   } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 
-  // ─────────────────────────────────────────────────────────────
-  // 1. Plak hier jouw Firebase-configuratie
-  //    (Firebase console → Projectinstellingen → Je apps → Web-app)
-  // ─────────────────────────────────────────────────────────────
-const firebaseConfig = {
-  apiKey: "AIzaSyB7ZA9dBU8wAElR3rMt2Rf607sFsmR1WXI",
-  authDomain: "kerstlijstje-f45c3.firebaseapp.com",
-  databaseURL: "https://kerstlijstje-f45c3-default-rtdb.europe-west1.firebasedatabase.app",
-  projectId: "kerstlijstje-f45c3",
-  storageBucket: "kerstlijstje-f45c3.firebasestorage.app",
-  messagingSenderId: "1065905360166",
-  appId: "1:1065905360166:web:1bd05b667e4f6ae4f385e7"
-};
+  // Firebase-configuratie van project "kerstlijstje"
+  const firebaseConfig = {
+    apiKey: "AIzaSyB7ZA9dBU8wAElR3rMt2Rf607sFsmR1WXI",
+    authDomain: "kerstlijstje-f45c3.firebaseapp.com",
+    databaseURL: "https://kerstlijstje-f45c3-default-rtdb.europe-west1.firebasedatabase.app",
+    projectId: "kerstlijstje-f45c3",
+    storageBucket: "kerstlijstje-f45c3.firebasestorage.app",
+    messagingSenderId: "1065905360166",
+    appId: "1:1065905360166:web:1bd05b667e4f6ae4f385e7"
+  };
 
   const MIN_PRICE = 10;
   const MAX_PRICE = 25;
@@ -203,6 +203,7 @@ const firebaseConfig = {
   let unsubs = [];
   let currentView = null;
   let busyItem = null;
+  let phase = "submit";        // settings/game.phase: "submit" (aandragen) of "pick" (kiezen)
   const seenPicks = new Set();
   let firstPickRender = true;
 
@@ -304,6 +305,7 @@ const firebaseConfig = {
     unsubs = [];
     myDoc = null;
     items = [];
+    phase = "submit";
     currentView = null;
     seenPicks.clear();
     firstPickRender = true;
@@ -323,6 +325,10 @@ const firebaseConfig = {
     }, onListenError));
     unsubs.push(onSnapshot(collection(db, "items"), (snap) => {
       items = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      update();
+    }, onListenError));
+    unsubs.push(onSnapshot(doc(db, "settings", "game"), (snap) => {
+      phase = snap.exists() && snap.data().phase === "pick" ? "pick" : "submit";
       update();
     }, onListenError));
   }
@@ -446,9 +452,14 @@ const firebaseConfig = {
     }
     firstPickRender = false;
 
+    const contributors = new Set(items.map((i) => i.ownerId)).size;
+    const waiting = !done && phase !== "pick";
+
     let gridHtml;
     if (done) {
       gridHtml = `<div class="empty">Je hebt al je ${ITEMS_TO_PICK} cadeaus gekozen. Fijne feestdagen!</div>`;
+    } else if (waiting) {
+      gridHtml = `<div class="empty">Het kiezen is nog niet begonnen. Zodra de beheerder het kiezen start, verschijnen hier de cadeaus en kun je kiezen. Deze pagina werkt zichzelf bij, je hoeft niets te doen.<br><br><strong>${contributors}</strong> ${contributors === 1 ? "deelnemer heeft" : "deelnemers hebben"} tot nu toe cadeaus aangedragen.</div>`;
     } else if (!available.length) {
       gridHtml = `<div class="empty">Er zijn nu geen cadeaus meer beschikbaar. Zodra anderen hun lijst invullen verschijnen ze hier vanzelf.</div>`;
     } else {
@@ -465,9 +476,11 @@ const firebaseConfig = {
     }
 
     app.innerHTML = `
-      <h1>${done ? "Jouw cadeaus" : "Kies blind"}</h1>
+      <h1>${done ? "Jouw cadeaus" : waiting ? "Nog even wachten" : "Kies blind"}</h1>
       <p class="intro">${done
         ? "Dit zijn de cadeaus die jij hebt getrokken, met erbij voor wie je ze koopt."
+        : waiting
+        ? "Je cadeaus zijn opgeslagen. Je kunt kiezen zodra iedereen zijn cadeaus heeft aangedragen en de beheerder het kiezen start."
         : `Tik op een vervaagd cadeau om te zien wat het is en voor wie je het koopt. Elk cadeau kan maar één keer gekozen worden en je keuze staat vast. Je mag er ${ITEMS_TO_PICK} kiezen.`}</p>
       <div class="counter" aria-label="${picked.length} van ${ITEMS_TO_PICK} gekozen">${pips}<span class="muted" style="margin-left:6px">${picked.length} van ${ITEMS_TO_PICK} gekozen</span></div>
 
@@ -475,8 +488,8 @@ const firebaseConfig = {
 
       <section class="block">
         <div class="head">
-          <h2>${done ? "Overige cadeaus" : "Beschikbaar"}</h2>
-          <span class="muted">${available.length} nog te kiezen</span>
+          <h2>${done ? "Overige cadeaus" : waiting ? "Kiezen" : "Beschikbaar"}</h2>
+          ${waiting ? "" : `<span class="muted">${available.length} nog te kiezen</span>`}
         </div>
         ${gridHtml}
       </section>`;
@@ -492,8 +505,13 @@ const firebaseConfig = {
       await runTransaction(db, async (tx) => {
         const itemRef = doc(db, "items", itemId);
         const meRef = doc(db, "participants", me.id);
+        const settingsSnap = await tx.get(doc(db, "settings", "game"));
         const itemSnap = await tx.get(itemRef);
         const meSnap = await tx.get(meRef);
+
+        if (!settingsSnap.exists() || settingsSnap.data().phase !== "pick") {
+          throw new Error("Het kiezen is nog niet begonnen.");
+        }
 
         if (!itemSnap.exists()) throw new Error("Dit cadeau bestaat niet meer.");
         const item = itemSnap.data();
@@ -528,6 +546,7 @@ const firebaseConfig = {
     unsubs = [];
     items = [];
     participants = [];
+    phase = "submit";
     currentView = "admin";
     whoami.innerHTML = `<span class="muted">Beheerder</span> · <button class="linklike" id="switch">Uitloggen</button>`;
     document.getElementById("switch").addEventListener("click", () => {
@@ -545,6 +564,10 @@ const firebaseConfig = {
       items = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
       renderAdmin();
     }, onListenError));
+    unsubs.push(onSnapshot(doc(db, "settings", "game"), (snap) => {
+      phase = snap.exists() && snap.data().phase === "pick" ? "pick" : "submit";
+      renderAdmin();
+    }, onListenError));
   }
 
   function renderAdmin() {
@@ -553,6 +576,7 @@ const firebaseConfig = {
     const people = [...participants].sort(byName);
     const allItems = [...items].sort((a, b) => byName(a, b) || String(a.text).localeCompare(String(b.text), "nl"));
     const claimedCount = items.filter((i) => i.claimedById).length;
+    const notSubmitted = people.filter((p) => !p.submitted);
 
     const peopleRows = people.map((p) => {
       const given = items.filter((i) => i.ownerId === p.id);
@@ -575,6 +599,19 @@ const firebaseConfig = {
 
     app.innerHTML = `
       <h1>Beheer</h1>
+      <div class="panel phase">
+        <div>
+          <strong>Fase: ${phase === "pick" ? "kiezen is gestart" : "cadeaus aandragen"}</strong>
+          <p class="muted" style="margin-top:4px">${phase === "pick"
+            ? "Deelnemers kunnen nu blind cadeaus kiezen."
+            : notSubmitted.length
+              ? `Nog niet aangedragen (${notSubmitted.length}): ${notSubmitted.map((p) => esc(p.name)).join(", ")}.`
+              : participants.length ? "Iedereen heeft cadeaus aangedragen." : "Nog geen deelnemers."}</p>
+        </div>
+        ${phase === "pick"
+          ? `<button class="secondary" data-phase="submit">Terug naar aandragen</button>`
+          : `<button class="primary" data-phase="pick">Start het kiezen</button>`}
+      </div>
       <div class="stats">
         <span><strong>${participants.length}</strong> deelnemers</span>
         <span><strong>${items.length}</strong> cadeaus</span>
@@ -597,8 +634,24 @@ const firebaseConfig = {
         </table></div>
       </section>`;
 
+    app.querySelectorAll("[data-phase]").forEach((b) => b.addEventListener("click", () => setPhase(b.dataset.phase)));
     app.querySelectorAll("[data-del-user]").forEach((b) => b.addEventListener("click", () => deleteUser(b.dataset.delUser)));
     app.querySelectorAll("[data-del-item]").forEach((b) => b.addEventListener("click", () => deleteItem(b.dataset.delItem)));
+  }
+
+  async function setPhase(next) {
+    const missing = participants.filter((p) => !p.submitted);
+    const msg = next === "pick"
+      ? "Het kiezen starten?" + (missing.length ? `\n\nLet op: ${missing.map((p) => p.name).join(", ")} ${missing.length === 1 ? "heeft" : "hebben"} nog geen cadeaus aangedragen.` : "")
+      : "Terug naar aandragen? Deelnemers kunnen dan tijdelijk niet kiezen. Keuzes die al gemaakt zijn blijven staan.";
+    if (!confirm(msg)) return;
+    try {
+      await setDoc(doc(db, "settings", "game"), { phase: next, updatedAt: serverTimestamp() }, { merge: true });
+      toast(next === "pick" ? "Het kiezen is gestart." : "Teruggezet naar aandragen.");
+    } catch (err) {
+      console.error(err);
+      toast("Wijzigen mislukt.", true);
+    }
   }
 
   async function deleteItem(itemId) {

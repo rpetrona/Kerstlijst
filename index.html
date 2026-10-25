@@ -123,6 +123,10 @@
   #toast.show { opacity: 1; transform: translate(-50%, 0); }
   #toast.error { background: var(--ribbon-dark); }
 
+  /* Link zoeken */
+  .gift-row .link-line { grid-column: 1 / -1; }
+  .pick .buy { display: inline-block; margin-top: 8px; font-weight: 600; color: var(--ribbon-dark); }
+
   /* Beheerder */
   .table-wrap { overflow-x: auto; background: var(--paper); border: 1px solid var(--line); border-radius: var(--radius); }
   table { border-collapse: collapse; width: 100%; font-size: .95rem; }
@@ -170,6 +174,7 @@
 const firebaseConfig = {
   apiKey: "AIzaSyB7ZA9dBU8wAElR3rMt2Rf607sFsmR1WXI",
   authDomain: "kerstlijstje-f45c3.firebaseapp.com",
+  databaseURL: "https://kerstlijstje-f45c3-default-rtdb.europe-west1.firebasedatabase.app",
   projectId: "kerstlijstje-f45c3",
   storageBucket: "kerstlijstje-f45c3.firebasestorage.app",
   messagingSenderId: "1065905360166",
@@ -203,6 +208,7 @@ const firebaseConfig = {
 
   // ── Helpers ──────────────────────────────────────────────────
   const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  const safeLink = (u) => { try { const x = new URL(u); return /^https?:$/.test(x.protocol) ? x.href : ""; } catch { return ""; } };
   const euro = (n) => "€ " + Number(n).toFixed(2).replace(".", ",");
   const slug = (name) => name.trim().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
 
@@ -348,6 +354,9 @@ const firebaseConfig = {
             <span aria-hidden="true">€</span>
             <input id="p${i}" type="number" inputmode="decimal" min="${MIN_PRICE}" max="${MAX_PRICE}" step="0.5" placeholder="${MIN_PRICE}–${MAX_PRICE}" aria-label="Prijs cadeau ${i} in euro" required>
           </div>
+          <div class="link-line">
+            <input id="l${i}" type="text" inputmode="url" autocapitalize="off" placeholder="Link naar het cadeau (optioneel), plak hier de link" aria-label="Link cadeau ${i}">
+          </div>
         </div>`;
     }
     app.innerHTML = `
@@ -371,7 +380,13 @@ const firebaseConfig = {
           document.getElementById("p" + i).focus();
           return;
         }
-        entries.push({ text, price: Math.round(price * 100) / 100 });
+        let link = document.getElementById("l" + i).value.trim();
+        if (link) {
+          if (!/^https?:\/\//i.test(link)) link = "https://" + link;
+          link = safeLink(link);
+          if (!link) { toast(`Cadeau ${i}: dit is geen geldige link.`, true); document.getElementById("l" + i).focus(); return; }
+        }
+        entries.push({ text, price: Math.round(price * 100) / 100, link: link || null });
       }
       const btn = e.target.querySelector("button[type=submit]");
       btn.disabled = true;
@@ -382,6 +397,7 @@ const firebaseConfig = {
           batch.set(ref, {
             text: en.text,
             price: en.price,
+            link: en.link,
             ownerId: me.id,
             ownerName: me.name,
             claimedById: null,
@@ -423,6 +439,7 @@ const firebaseConfig = {
           <div>
             <div class="for">Cadeau voor <strong>${esc(it.ownerName)}</strong></div>
             <div class="p">${euro(it.price)}</div>
+            ${safeLink(it.link) ? `<a class="buy" href="${esc(safeLink(it.link))}" target="_blank" rel="noopener noreferrer">Bekijk cadeau →</a>` : ""}
           </div>
         </article>`;
       }).join("") + `</div>`;
@@ -549,7 +566,7 @@ const firebaseConfig = {
     }).join("");
 
     const itemRows = allItems.map((i) => `<tr>
-      <td>${esc(i.text)}</td>
+      <td>${esc(i.text)}${safeLink(i.link) ? ` <a href="${esc(safeLink(i.link))}" target="_blank" rel="noopener noreferrer">link</a>` : ""}</td>
       <td>${euro(i.price)}</td>
       <td>${esc(i.ownerName)}</td>
       <td>${i.claimedByName ? esc(i.claimedByName) : `<span class="muted">nog niet gekozen</span>`}</td>

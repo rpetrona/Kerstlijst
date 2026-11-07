@@ -40,6 +40,39 @@
   .muted { color: var(--ink-soft); }
   :focus-visible { outline: 3px solid var(--gold); outline-offset: 2px; }
 
+  /* Kerst */
+  body { position: relative; min-height: 100vh; }
+  .garland { position: absolute; top: 0; left: 0; right: 0; height: 56px; pointer-events: none; z-index: 2;
+    background: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='100' height='56' viewBox='0 0 100 56'><path d='M0 4 Q50 22 100 4' fill='none' stroke='%23556' stroke-width='2'/><rect x='18' y='9' width='4' height='5' fill='%23F2B134'/><circle cx='20' cy='21' r='7.5' fill='%23D62839'/><circle cx='17.5' cy='18.5' r='2' fill='%23fff' fill-opacity='.45'/><rect x='48' y='12' width='4' height='5' fill='%23B8860B'/><circle cx='50' cy='24' r='7.5' fill='%23F2B134'/><circle cx='47.5' cy='21.5' r='2' fill='%23fff' fill-opacity='.55'/><rect x='78' y='9' width='4' height='5' fill='%23F2B134'/><circle cx='80' cy='21' r='7.5' fill='%232E8B57'/><circle cx='77.5' cy='18.5' r='2' fill='%23fff' fill-opacity='.45'/></svg>") repeat-x top center; }
+  main { position: relative; z-index: 1; padding-top: 64px; }
+  .deco { margin-top: 56px; text-align: center; font-size: clamp(1.6rem, 5vw, 2.4rem); letter-spacing: .35em; user-select: none; }
+  .deco span { display: inline-block; }
+  .deco span:nth-child(odd) { animation: wiggle 3.2s ease-in-out infinite; }
+  .deco span:nth-child(even) { animation: wiggle 3.8s ease-in-out infinite reverse; }
+  @keyframes wiggle { 0%, 100% { transform: rotate(-6deg); } 50% { transform: rotate(6deg); } }
+  .tile .ico { position: absolute; top: 10px; right: 12px; font-size: 1.5rem; }
+  .empty .big { font-size: 2.4rem; margin-bottom: 6px; }
+
+  /* Inlogpagina: winternacht met sneeuw */
+  body.night { background: linear-gradient(180deg, #0d1830 0%, #1c3557 70%, #29476f 100%); }
+  body.night::after { content: ""; position: fixed; left: -5%; right: -5%; bottom: -46px; height: 96px; background: #fff; border-radius: 50% 50% 0 0; box-shadow: 0 -6px 30px rgba(255,255,255,.35); z-index: 0; pointer-events: none; }
+  .night .brand { color: var(--gold); }
+  .night .muted, .night .linklike { color: #c9d6ea; }
+  .hero { text-align: center; margin: 6px 0 26px; }
+  .hero h1 { font-size: clamp(2.6rem, 11vw, 5.6rem); line-height: 1; color: #fff;
+    text-shadow: 0 3px 0 var(--ribbon), 0 7px 0 var(--ribbon-dark), 0 14px 28px rgba(0,0,0,.4); }
+  .hero .emojis { font-size: clamp(2rem, 7vw, 3.2rem); margin-top: 16px; letter-spacing: .25em; }
+  .login-title { text-align: center; color: #fff; }
+  .night .intro { color: #dbe4f3; margin-left: auto; margin-right: auto; text-align: center; }
+  .login-card { max-width: 460px; margin: 0 auto; color: var(--ink); }
+  #snow { position: fixed; inset: 0; pointer-events: none; overflow: hidden; z-index: 0; }
+  #snow span { position: absolute; top: -20px; background: #fff; border-radius: 50%; animation: fall linear infinite; }
+  @keyframes fall {
+    0% { transform: translate(0, -5vh); }
+    50% { transform: translate(var(--sway), 50vh); }
+    100% { transform: translate(calc(var(--sway) * -1), 105vh); }
+  }
+
   /* Header */
   .top { display: flex; justify-content: space-between; align-items: baseline; gap: 16px; flex-wrap: wrap; margin-bottom: 28px; }
   .brand { font-family: var(--display); font-weight: 800; font-size: 1.15rem; color: var(--ribbon); }
@@ -149,17 +182,20 @@
     .panel { padding: 20px; }
   }
   @media (prefers-reduced-motion: reduce) {
+    #snow { display: none; }
     * { animation: none !important; transition: none !important; }
   }
 </style>
 </head>
 <body>
+<div class="garland" aria-hidden="true"></div>
 <main>
   <div class="top">
-    <span class="brand">Cadeautjes trekken</span>
+    <span class="brand">🎄 Kerst met de familie</span>
     <span id="whoami"></span>
   </div>
   <div id="app"></div>
+  <div class="deco" aria-hidden="true"><span>🎅</span><span>🦌</span><span>🎁</span><span>☕</span><span>🧦</span><span>⛄</span><span>🎄</span></div>
 </main>
 <div id="toast" role="status" aria-live="polite"></div>
 
@@ -209,6 +245,27 @@
 
   // ── Helpers ──────────────────────────────────────────────────
   const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  const ICONS = ["🎁", "🧦", "🎄", "⭐", "🔔", "🍬", "🦌"];
+
+  function setScene(login) {
+    document.body.classList.toggle("night", login);
+    const old = document.getElementById("snow");
+    if (old) old.remove();
+    if (!login) return;
+    const box = document.createElement("div");
+    box.id = "snow";
+    box.setAttribute("aria-hidden", "true");
+    for (let i = 0; i < 70; i++) {
+      const f = document.createElement("span");
+      const size = 4 + Math.random() * 10;
+      f.style.cssText = `left:${(Math.random() * 100).toFixed(1)}%;width:${size.toFixed(1)}px;height:${size.toFixed(1)}px;` +
+        `animation-duration:${(8 + Math.random() * 12).toFixed(1)}s;animation-delay:${(-Math.random() * 20).toFixed(1)}s;` +
+        `opacity:${(0.5 + Math.random() * 0.5).toFixed(2)};--sway:${Math.round(Math.random() * 80 - 40)}px`;
+      box.appendChild(f);
+    }
+    document.body.appendChild(box);
+  }
+
   const safeLink = (u) => { try { const x = new URL(u); return /^https?:$/.test(x.protocol) ? x.href : ""; } catch { return ""; } };
   const euro = (n) => "€ " + Number(n).toFixed(2).replace(".", ",");
   const slug = (name) => name.trim().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
@@ -259,11 +316,16 @@
   // ── Stap 1: naam ─────────────────────────────────────────────
   function renderLogin() {
     currentView = "login";
+    setScene(true);
     whoami.innerHTML = "";
     app.innerHTML = `
-      <h1>Wie doet er mee?</h1>
+      <div class="hero">
+        <h1>Kerst met de familie</h1>
+        <div class="emojis" aria-hidden="true">🎅 🦌 ⛄ 🎁</div>
+      </div>
+      <h2 class="login-title">Wie doet er mee?</h2>
       <p class="intro">Vul je naam in. Daarna kies je vijf cadeautjes die jij zelf graag zou krijgen en trek je blind drie cadeautjes van anderen.</p>
-      <form class="panel" id="login-form" novalidate>
+      <form class="panel login-card" id="login-form" novalidate>
         <label for="name">Je naam</label>
         <input id="name" type="text" maxlength="40" autocomplete="given-name" required>
         <p class="hint">Kom je terug? Vul dezelfde naam in, dan ga je verder waar je was.</p>
@@ -307,6 +369,7 @@
     items = [];
     phase = "submit";
     currentView = null;
+    setScene(false);
     seenPicks.clear();
     firstPickRender = true;
 
@@ -366,7 +429,7 @@
         </div>`;
     }
     app.innerHTML = `
-      <h1>Wat zou jij graag krijgen, ${esc(me.name)}?</h1>
+      <h1>Wat zou jij graag krijgen, ${esc(me.name)}? 🎄</h1>
       <p class="intro">Voer ${ITEMS_TO_SUBMIT} cadeautjes in met een prijs tussen € ${MIN_PRICE} en € ${MAX_PRICE}. Wie jouw cadeau trekt, ziet dat het van jou komt en koopt het voor je. Je kunt deze lijst achteraf niet meer aanpassen.</p>
       <form class="panel" id="gift-form" novalidate>
         ${rows}
@@ -443,7 +506,7 @@
         return `<article class="pick ${isNew ? "reveal" : ""}">
           <div class="t">${esc(it.text)}</div>
           <div>
-            <div class="for">Cadeau voor <strong>${esc(it.ownerName)}</strong></div>
+            <div class="for">🎁 Cadeau voor <strong>${esc(it.ownerName)}</strong></div>
             <div class="p">${euro(it.price)}</div>
             ${safeLink(it.link) ? `<a class="buy" href="${esc(safeLink(it.link))}" target="_blank" rel="noopener noreferrer">Bekijk cadeau →</a>` : ""}
           </div>
@@ -457,9 +520,9 @@
 
     let gridHtml;
     if (done) {
-      gridHtml = `<div class="empty">Je hebt al je ${ITEMS_TO_PICK} cadeaus gekozen. Fijne feestdagen!</div>`;
+      gridHtml = `<div class="empty">Je hebt al je ${ITEMS_TO_PICK} cadeaus gekozen. Fijne feestdagen! 🎄</div>`;
     } else if (waiting) {
-      gridHtml = `<div class="empty">Het kiezen is nog niet begonnen. Zodra de beheerder het kiezen start, verschijnen hier de cadeaus en kun je kiezen. Deze pagina werkt zichzelf bij, je hoeft niets te doen.<br><br><strong>${contributors}</strong> ${contributors === 1 ? "deelnemer heeft" : "deelnemers hebben"} tot nu toe cadeaus aangedragen.</div>`;
+      gridHtml = `<div class="empty"><div class="big">☕</div>Het kiezen is nog niet begonnen. Zodra de beheerder het kiezen start, verschijnen hier de cadeaus en kun je kiezen. Deze pagina werkt zichzelf bij, je hoeft niets te doen.<br><br><strong>${contributors}</strong> ${contributors === 1 ? "deelnemer heeft" : "deelnemers hebben"} tot nu toe cadeaus aangedragen.</div>`;
     } else if (!available.length) {
       gridHtml = `<div class="empty">Er zijn nu geen cadeaus meer beschikbaar. Zodra anderen hun lijst invullen verschijnen ze hier vanzelf.</div>`;
     } else {
@@ -470,13 +533,14 @@
             <div class="t">${esc(filler)}</div>
             <div class="p">€ 00,00</div>
           </div>
+          <span class="ico" aria-hidden="true">${ICONS[hash(it.id + "i") % ICONS.length]}</span>
           <span class="tag">Tik om te onthullen</span>
         </button>`;
       }).join("") + `</div>`;
     }
 
     app.innerHTML = `
-      <h1>${done ? "Jouw cadeaus" : waiting ? "Nog even wachten" : "Kies blind"}</h1>
+      <h1>${done ? "Jouw cadeaus 🎁" : waiting ? "Nog even wachten ☕" : "Kies blind 🎅"}</h1>
       <p class="intro">${done
         ? "Dit zijn de cadeaus die jij hebt getrokken, met erbij voor wie je ze koopt."
         : waiting
@@ -548,6 +612,7 @@
     participants = [];
     phase = "submit";
     currentView = "admin";
+    setScene(false);
     whoami.innerHTML = `<span class="muted">Beheerder</span> · <button class="linklike" id="switch">Uitloggen</button>`;
     document.getElementById("switch").addEventListener("click", () => {
       unsubs.forEach((u) => u());
@@ -598,7 +663,7 @@
     </tr>`).join("");
 
     app.innerHTML = `
-      <h1>Beheer</h1>
+      <h1>Beheer 🎅</h1>
       <div class="panel phase">
         <div>
           <strong>Fase: ${phase === "pick" ? "kiezen is gestart" : "cadeaus aandragen"}</strong>

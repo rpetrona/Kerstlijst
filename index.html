@@ -160,6 +160,8 @@
   .gift-row .link-line { grid-column: 1 / -1; }
   .pick .buy { display: inline-block; margin-top: 8px; font-weight: 600; color: var(--ribbon-dark); }
 
+  .tile.extra { border-style: dashed; border-color: var(--gold); border-width: 2px; }
+
   /* Beheerder */
   .warn { margin-top: 8px; padding: 8px 12px; background: #FFF4D6; border: 1.5px solid var(--gold); border-radius: 8px; color: var(--ink); }
   .phase { display: flex; justify-content: space-between; align-items: center; gap: 16px; flex-wrap: wrap; margin-bottom: 8px; }
@@ -204,7 +206,7 @@
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
   import {
     getFirestore, doc, getDoc, setDoc, collection, onSnapshot,
-    writeBatch, runTransaction, serverTimestamp, arrayRemove
+    writeBatch, runTransaction, serverTimestamp
   } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 
   // Firebase-configuratie van project "kerstlijstje"
@@ -223,21 +225,120 @@
   const ITEMS_TO_SUBMIT = 5;
   const ITEMS_TO_PICK = 3;
 
-  // Deze deelnemers (op naam, hoofdletters en accenten maken niet uit) mogen cadeaus aandragen maar hoeven niet te kiezen.
+  // Deze deelnemers (op naam; hoofdletters en accenten maken niet uit) mogen cadeaus aandragen, maar kiezen zelf niet.
+  // Andere deelnemers onthullen voor hen de cadeaus die zij kopen.
   const NO_PICK = ["rosalie", "sander"];
-  const mustPick = (id) => !NO_PICK.includes(id);
+  const isExempt = (id) => NO_PICK.includes(id);
+  const isDistributed = () => items.some((i) => i.assignedToId);
 
-  // Kan iedereen die moet kiezen nog aan 3 cadeaus komen? (Hall-conditie: het totaal aantal vrije cadeaus
-  // moet genoeg zijn, en elke deelnemer heeft genoeg vrije cadeaus die niet van hemzelf zijn.)
-  function stillFeasible(itemList) {
-    const free = itemList.filter((i) => !i.claimedById);
-    const needy = participants
-      .filter((p) => mustPick(p.id))
-      .map((p) => ({ id: p.id, need: ITEMS_TO_PICK - itemList.filter((i) => i.claimedById === p.id).length }))
-      .filter((p) => p.need > 0);
-    const totalNeed = needy.reduce((sum, p) => sum + p.need, 0);
-    if (totalNeed > free.length) return false;
-    return needy.every((p) => p.need <= free.filter((i) => i.ownerId !== p.id).length);
+  // ── Verdeling ─────────────────────────────────────────────────
+  // Kiest per deelnemer K van de aangedragen cadeaus (die deelnemer ontvangt er dus K) en verdeelt die over
+  // de kopers. Kopers zijn alle deelnemers die zelf kiezen. Elke koper koopt K cadeaus van andere kopers,
+  // plus (ongeveer) 1 extra cadeau voor de deelnemers die niet kiezen (zij kopen zelf niets).
+  // Niemand koopt een eigen cadeau en de totaalbedragen per koper zijn zo gelijk mogelijk.
+  // Simulated annealing met een paar herstarts.
+  function computeDistribution(allItems, people, K, exemptIds) {
+    const exempt = new Set(exemptIds);
+    const owners = people;
+    const buyers = people.filter((p) => !exempt.has(p.id));
+    const O = owners.length, B = buyers.length;
+    if (B < 2) return { error: "Er zijn minstens 2 deelnemers nodig die zelf kiezen." };
+    const its = owners.map((o) => allItems.filter((i) => i.ownerId === o.id));
+    for (let o = 0; o < O; o++) {
+      if (its[o].length < K) return { error: `${owners[o].name} heeft minder dan ${K} cadeaus aangedragen.` };
+    }
+    const buyerIdx = new Map(buyers.map((b, i) => [b.id, i]));
+    const ownerBuyer = owners.map((o) => (buyerIdx.has(o.id) ? buyerIdx.get(o.id) : -1)); // -1: koopt zelf niets
+    const DUP = 400; // straf als iemand twee cadeaus van dezelfde persoon moet kopen
+
+    const randInt = (n) => Math.floor(Math.random() * n);
+    const shuffle = (a) => { for (let i = a.length - 1; i > 0; i--) { const j = randInt(i + 1); [a[i], a[j]] = [a[j], a[i]]; } return a; };
+
+    const regSlots = [], extraSlots = [];
+    for (let o = 0; o < O; o++) for (let k = 0; k < K; k++) (ownerBuyer[o] >= 0 ? regSlots : extraSlots).push([o, k]);
+    extraSlots.sort((x, y) => x[1] - y[1] || x[0] - y[0]);
+
+    function initial() {
+      const sel = [], dest = [];
+      for (let o = 0; o < O; o++) { sel[o] = shuffle([...Array(its[o].length).keys()]).slice(0, K); dest[o] = new Array(K); }
+      const perm = shuffle([...Array(B).keys()]);
+      const inv = new Array(B); perm.forEach((b, q) => { inv[b] = q; });
+      for (let o = 0; o < O; o++) {
+        if (ownerBuyer[o] < 0) continue;
+        const q = inv[ownerBuyer[o]];
+        for (let k = 0; k < K; k++) dest[o][k] = perm[(q - (1 + (k % (B - 1))) + B * K) % B];
+      }
+      const order = shuffle([...Array(B).keys()]);
+      extraSlots.forEach(([o, k], t) => { dest[o][k] = order[t % B]; });
+      return { sel, dest };
+    }
+
+    const cnt = new Int8Array(B * O);
+    const tot = new Float64Array(B);
+    function cost(st) {
+      tot.fill(0); cnt.fill(0);
+      let dup = 0;
+      for (let o = 0; o < O; o++) {
+        for (let k = 0; k < K; k++) {
+          const b = st.dest[o][k];
+          tot[b] += its[o][st.sel[o][k]].price;
+          if (++cnt[b * O + o] > 1) dup++;
+        }
+      }
+      let mean = 0; for (let b = 0; b < B; b++) mean += tot[b]; mean /= B;
+      let v = 0; for (let b = 0; b < B; b++) v += (tot[b] - mean) * (tot[b] - mean);
+      return v + DUP * dup;
+    }
+
+    let best = null, bestCost = Infinity;
+    const RESTARTS = 6, ITER = 40000;
+    for (let r = 0; r < RESTARTS; r++) {
+      const st = initial();
+      let c = cost(st);
+      const T0 = 30, T1 = 0.02;
+      for (let it = 0; it < ITER; it++) {
+        const T = T0 * Math.pow(T1 / T0, it / ITER);
+        let undo = null;
+        const x = Math.random();
+        if (x < 0.55) {
+          const useExtra = extraSlots.length > 1 && Math.random() < extraSlots.length / (extraSlots.length + regSlots.length);
+          const pool = useExtra ? extraSlots : regSlots;
+          const [o1, k1] = pool[randInt(pool.length)], [o2, k2] = pool[randInt(pool.length)];
+          if (o1 === o2 && k1 === k2) continue;
+          const b1 = st.dest[o1][k1], b2 = st.dest[o2][k2];
+          if (b1 === b2) continue;
+          if (!useExtra && (b2 === ownerBuyer[o1] || b1 === ownerBuyer[o2])) continue;
+          st.dest[o1][k1] = b2; st.dest[o2][k2] = b1;
+          undo = () => { st.dest[o1][k1] = b1; st.dest[o2][k2] = b2; };
+        } else {
+          const o = randInt(O), k = randInt(K);
+          if (its[o].length <= K) continue;
+          let u; do { u = randInt(its[o].length); } while (st.sel[o].includes(u));
+          const old = st.sel[o][k];
+          st.sel[o][k] = u;
+          undo = () => { st.sel[o][k] = old; };
+        }
+        const nc = cost(st);
+        if (nc <= c || Math.random() < Math.exp((c - nc) / T)) {
+          c = nc;
+          if (c < bestCost) { bestCost = c; best = { sel: st.sel.map((a) => [...a]), dest: st.dest.map((a) => [...a]) }; }
+        } else undo();
+      }
+      if (!best) { best = { sel: st.sel.map((a) => [...a]), dest: st.dest.map((a) => [...a]) }; bestCost = c; }
+    }
+
+    const assignments = []; // { itemId, ownerId, buyerId, revealerId }
+    const totals = {};
+    buyers.forEach((b) => { totals[b.id] = 0; });
+    for (let o = 0; o < O; o++) {
+      for (let k = 0; k < K; k++) {
+        const item = its[o][best.sel[o][k]];
+        const buyer = buyers[best.dest[o][k]];
+        assignments.push({ itemId: item.id, ownerId: owners[o].id, buyerId: buyer.id, revealerId: buyer.id });
+        totals[buyer.id] += item.price;
+      }
+    }
+    return { assignments, totals, cost: bestCost };
   }
 
   const app = document.getElementById("app");
@@ -342,7 +443,7 @@
         <div class="emojis" aria-hidden="true">🎅 🦌 ⛄ 🎁</div>
       </div>
       <h2 class="login-title">Wie doet er mee?</h2>
-      <p class="intro">Vul je naam in. Daarna kies je vijf cadeautjes die jij zelf graag zou krijgen en trek je blind drie cadeautjes van anderen.</p>
+      <p class="intro">Vul je naam in. Daarna kies je vijf cadeautjes die jij zelf graag zou krijgen en onthul je blind drie cadeautjes die jij voor anderen koopt.</p>
       <form class="panel login-card" id="login-form" novalidate>
         <label for="name">Je naam</label>
         <input id="name" type="text" maxlength="40" autocomplete="given-name" required>
@@ -413,10 +514,6 @@
       phase = snap.exists() && snap.data().phase === "pick" ? "pick" : "submit";
       update();
     }, onListenError));
-    unsubs.push(onSnapshot(collection(db, "participants"), (snap) => {
-      participants = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
-      update();
-    }, onListenError));
   }
 
   function onListenError(err) {
@@ -427,20 +524,49 @@
   function update() {
     if (!me || !myDoc) return;
     if (!myDoc.submitted) {
-      if (currentView !== "form") renderForm(); // niet opnieuw tekenen: voorkomt dat getypte tekst verdwijnt
-    } else if (!mustPick(me.id)) {
+      if (phase === "pick") renderClosed();
+      else if (currentView !== "form") renderForm(); // niet opnieuw tekenen: voorkomt dat getypte tekst verdwijnt
+    } else if (isExempt(me.id)) {
       renderExempt();
     } else {
       renderPick();
     }
   }
 
+  function renderClosed() {
+    currentView = "closed";
+    app.innerHTML = `
+      <h1>Het aandragen is gesloten 🔒</h1>
+      <p class="intro">De beheerder heeft het kiezen al gestart, dus er kunnen geen nieuwe cadeaus meer bij. Vraag de beheerder of het aandragen nog even heropend kan worden.</p>`;
+  }
+
+  // Kaartje met een onthuld cadeau
+  function cardHtml(it, isNew, note) {
+    const link = safeLink(it.link);
+    return `<article class="pick ${isNew ? "reveal" : ""}">
+      <div class="t">${esc(it.text)}</div>
+      <div>
+        <div class="for">🎁 Cadeau voor <strong>${esc(it.ownerName)}</strong></div>
+        ${note ? `<div class="for">${note}</div>` : ""}
+        <div class="p">${euro(it.price)}</div>
+        ${link ? `<a class="buy" href="${esc(link)}" target="_blank" rel="noopener noreferrer">Bekijk cadeau →</a>` : ""}
+      </div>
+    </article>`;
+  }
+
+  const countPips = (n, total = ITEMS_TO_PICK) => Array.from({ length: total }, (_, i) => `<span class="pip ${i < n ? "on" : ""}"></span>`).join("");
+  const sumPrice = (list) => list.reduce((t, i) => t + Number(i.price), 0);
+
+  // Deelnemers die zelf niet kiezen (Rosalie en Sander): anderen kopen cadeaus voor hen, dat blijft een verrassing
   function renderExempt() {
     currentView = "exempt";
+    const started = phase === "pick" && isDistributed();
     app.innerHTML = `
       <h1>Bedankt, ${esc(me.name)}! 🎅</h1>
-      <p class="intro">Je cadeaus zijn opgeslagen. Jij hoeft zelf geen cadeaus te kiezen.</p>
-      <div class="empty"><div class="big">🎁</div>De anderen kiezen blind uit de aangedragen cadeaus. Fijne feestdagen! 🎄</div>`;
+      <p class="intro">${started
+        ? `Jij hoeft zelf niets te kiezen of te kopen. De anderen zorgen voor jouw ${ITEMS_TO_PICK} cadeaus.`
+        : `Je cadeaus zijn opgeslagen. Jij hoeft zelf niets te kiezen of te kopen: de anderen zorgen straks voor jouw ${ITEMS_TO_PICK} cadeaus.`}</p>
+      <div class="empty"><div class="big">🎁</div>Laat je verrassen! Wat je krijgt, blijft geheim tot de feestdagen.</div>`;
   }
 
   // ── Stap 2: vijf cadeaus invoeren ────────────────────────────
@@ -463,7 +589,7 @@
     }
     app.innerHTML = `
       <h1>Wat zou jij graag krijgen, ${esc(me.name)}? 🎄</h1>
-      <p class="intro">Voer ${ITEMS_TO_SUBMIT} cadeautjes in met een prijs tussen € ${MIN_PRICE} en € ${MAX_PRICE}. Wie jouw cadeau trekt, ziet dat het van jou komt en koopt het voor je. Je kunt deze lijst achteraf niet meer aanpassen.</p>
+      <p class="intro">Voer ${ITEMS_TO_SUBMIT} cadeautjes in met een prijs tussen € ${MIN_PRICE} en € ${MAX_PRICE}. Er worden er precies ${ITEMS_TO_PICK} van gekozen: wie een cadeau trekt, ziet dat het van jou komt en koopt het voor je. Je kunt deze lijst achteraf niet meer aanpassen.</p>
       <form class="panel" id="gift-form" novalidate>
         ${rows}
         <p><button class="primary" type="submit">Cadeaus opslaan</button></p>
@@ -519,139 +645,108 @@
     });
   }
 
-  // ── Stap 3: blind kiezen ─────────────────────────────────────
+  // ── Stap 3: cadeaus onthullen ────────────────────────────────
   function renderPick() {
-    const picked = myDoc.picks || [];
-    const done = picked.length >= ITEMS_TO_PICK;
+    currentView = "pick";
+    const sortTiles = (a, b) => hash(a.id + me.id) - hash(b.id + me.id);
+    const tiles = items.filter((i) => i.revealerId === me.id).sort(sortTiles);
+    const extra = tiles.filter((i) => isExempt(i.ownerId)); // extra cadeaus voor deelnemers die zelf niet kiezen
+    const own = tiles.filter((i) => !isExempt(i.ownerId));
+    const ownDone = own.filter((i) => i.claimedById);
+    const extraDone = extra.filter((i) => i.claimedById);
+    const allDone = tiles.length > 0 && tiles.every((i) => i.claimedById);
+    const waiting = phase !== "pick";
+    const contributors = new Set(items.map((i) => i.ownerId)).size;
 
-    const myPicks = items.filter((it) => it.claimedById === me.id);
-    // Alleen cadeaus tonen waarbij iedereen daarna nog aan 3 cadeaus kan komen
-    const free = items.filter((it) => it.ownerId !== me.id && !it.claimedById);
-    const available = free
-      .filter((it) => stillFeasible(items.map((x) => (x.id === it.id ? { ...x, claimedById: me.id } : x))))
-      .sort((a, b) => hash(a.id + me.id) - hash(b.id + me.id));
-    const hiddenCount = free.length - available.length;
+    const reveal = (it, note) => {
+      const isNew = !seenPicks.has(it.id) && !firstPickRender;
+      seenPicks.add(it.id);
+      return cardHtml(it, isNew, note);
+    };
+    const tile = (it, isExtra) => {
+      const filler = FILLER[hash(it.id) % FILLER.length];
+      return `<button class="tile ${isExtra ? "extra" : ""} ${busyItem === it.id ? "busy" : ""}" data-id="${esc(it.id)}" aria-label="Onthul een cadeau">
+        <div class="fuzzy" aria-hidden="true">
+          <div class="t">${esc(filler)}</div>
+          <div class="p">€ 00,00</div>
+        </div>
+        <span class="ico" aria-hidden="true">${ICONS[hash(it.id + "i") % ICONS.length]}</span>
+        <span class="tag">Tik om te onthullen</span>
+      </button>`;
+    };
 
-    const pips = Array.from({ length: ITEMS_TO_PICK }, (_, i) => `<span class="pip ${i < picked.length ? "on" : ""}"></span>`).join("");
-
-    let picksHtml = "";
-    if (myPicks.length) {
-      picksHtml = `<div class="picks">` + myPicks.map((it) => {
-        const isNew = !seenPicks.has(it.id) && !firstPickRender;
-        seenPicks.add(it.id);
-        return `<article class="pick ${isNew ? "reveal" : ""}">
-          <div class="t">${esc(it.text)}</div>
-          <div>
-            <div class="for">🎁 Cadeau voor <strong>${esc(it.ownerName)}</strong></div>
-            <div class="p">${euro(it.price)}</div>
-            ${safeLink(it.link) ? `<a class="buy" href="${esc(safeLink(it.link))}" target="_blank" rel="noopener noreferrer">Bekijk cadeau →</a>` : ""}
-          </div>
-        </article>`;
-      }).join("") + `</div>`;
+    let body;
+    if (waiting) {
+      body = `<div class="empty"><div class="big">☕</div>Het kiezen is nog niet begonnen. Zodra de beheerder het kiezen start, verschijnen hier je cadeaus. Deze pagina werkt zichzelf bij, je hoeft niets te doen.<br><br><strong>${contributors}</strong> ${contributors === 1 ? "deelnemer heeft" : "deelnemers hebben"} tot nu toe cadeaus aangedragen.</div>`;
+    } else if (!tiles.length) {
+      body = `<div class="empty"><div class="big">🤔</div>Voor jou zijn geen cadeaus verdeeld. Waarschijnlijk heb je je cadeaus aangedragen nadat het kiezen was gestart. Vraag het de beheerder.</div>`;
+    } else {
+      const ownRows = ownDone.map((it) => reveal(it, "")).join("");
+      const extraRows = extraDone.map((it) => reveal(it, "")).join("");
+      body = `
+        ${ownDone.length ? `<section class="block"><div class="head"><h2>Jouw cadeaus</h2>${allDone ? `<span class="muted">Totaal van al je cadeaus: ${euro(sumPrice(tiles))}</span>` : ""}</div><div class="picks">${ownRows}</div></section>` : ""}
+        ${own.length > ownDone.length ? `<section class="block"><div class="head"><h2>Onthul je cadeaus</h2><span class="muted">nog ${own.length - ownDone.length} te onthullen</span></div><div class="grid">${own.filter((i) => !i.claimedById).map((i) => tile(i, false)).join("")}</div></section>` : ""}
+        ${extra.length ? `<section class="block"><div class="head"><h2>Extra voor Rosalie of Sander</h2></div>
+          <p class="muted" style="margin-bottom:14px">Rosalie en Sander kiezen zelf niet. Daarom koop jij ${extra.length === 1 ? "één extra cadeau" : `${extra.length} extra cadeaus`} voor hen.</p>
+          ${extraDone.length ? `<div class="picks" style="margin-bottom:16px">${extraRows}</div>` : ""}
+          ${extra.length > extraDone.length ? `<div class="grid">${extra.filter((i) => !i.claimedById).map((i) => tile(i, true)).join("")}</div>` : ""}
+        </section>` : ""}
+        ${allDone ? `<div class="empty" style="margin-top:32px">Alles onthuld. Fijne feestdagen! 🎄</div>` : ""}`;
     }
     firstPickRender = false;
 
-    const contributors = new Set(items.map((i) => i.ownerId)).size;
-    const waiting = !done && phase !== "pick";
-
-    let gridHtml;
-    if (done) {
-      gridHtml = `<div class="empty">Je hebt al je ${ITEMS_TO_PICK} cadeaus gekozen. Fijne feestdagen! 🎄</div>`;
-    } else if (waiting) {
-      gridHtml = `<div class="empty"><div class="big">☕</div>Het kiezen is nog niet begonnen. Zodra de beheerder het kiezen start, verschijnen hier de cadeaus en kun je kiezen. Deze pagina werkt zichzelf bij, je hoeft niets te doen.<br><br><strong>${contributors}</strong> ${contributors === 1 ? "deelnemer heeft" : "deelnemers hebben"} tot nu toe cadeaus aangedragen.</div>`;
-    } else if (!available.length && free.length) {
-      gridHtml = `<div class="empty"><div class="big">⏳</div>Op dit moment kun je geen cadeau kiezen, omdat de overgebleven cadeaus nodig zijn zodat iedereen er 3 kan krijgen. Dit verandert vanzelf zodra anderen hebben gekozen of er cadeaus bijkomen.</div>`;
-    } else if (!available.length) {
-      gridHtml = `<div class="empty">Er zijn nu geen cadeaus meer beschikbaar. Zodra anderen hun lijst invullen verschijnen ze hier vanzelf.</div>`;
-    } else {
-      gridHtml = `<div class="grid">` + available.map((it, i) => {
-        const filler = FILLER[hash(it.id) % FILLER.length];
-        return `<button class="tile ${busyItem === it.id ? "busy" : ""}" data-id="${esc(it.id)}" aria-label="Onthul een cadeau">
-          <div class="fuzzy" aria-hidden="true">
-            <div class="t">${esc(filler)}</div>
-            <div class="p">€ 00,00</div>
-          </div>
-          <span class="ico" aria-hidden="true">${ICONS[hash(it.id + "i") % ICONS.length]}</span>
-          <span class="tag">Tik om te onthullen</span>
-        </button>`;
-      }).join("") + `</div>`;
-    }
-
     app.innerHTML = `
-      <h1>${done ? "Jouw cadeaus 🎁" : waiting ? "Nog even wachten ☕" : "Kies blind 🎅"}</h1>
-      <p class="intro">${done
-        ? "Dit zijn de cadeaus die jij hebt getrokken, met erbij voor wie je ze koopt."
-        : waiting
+      <h1>${allDone ? "Jouw cadeaus 🎁" : waiting ? "Nog even wachten ☕" : "Kies blind 🎅"}</h1>
+      <p class="intro">${waiting
         ? "Je cadeaus zijn opgeslagen. Je kunt kiezen zodra iedereen zijn cadeaus heeft aangedragen en de beheerder het kiezen start."
-        : `Tik op een vervaagd cadeau om te zien wat het is en voor wie je het koopt. Elk cadeau kan maar één keer gekozen worden en je keuze staat vast. Je mag er ${ITEMS_TO_PICK} kiezen.`}</p>
-      <div class="counter" aria-label="${picked.length} van ${ITEMS_TO_PICK} gekozen">${pips}<span class="muted" style="margin-left:6px">${picked.length} van ${ITEMS_TO_PICK} gekozen</span></div>
+        : allDone
+          ? "Dit zijn de cadeaus die jij hebt getrokken, met erbij voor wie je ze koopt."
+          : `Tik op een vervaagd cadeau om te zien wat het is en voor wie je het koopt. De cadeaus zijn zo verdeeld dat iedereen ongeveer evenveel betaalt.`}</p>
+      ${waiting || !tiles.length ? "" : `<div class="counter" aria-label="${ownDone.length + extraDone.length} van ${tiles.length} onthuld">${countPips(ownDone.length + extraDone.length, tiles.length)}<span class="muted" style="margin-left:6px">${ownDone.length + extraDone.length} van ${tiles.length} onthuld</span></div>`}
+      ${body}`;
 
-      ${myPicks.length ? `<section class="block"><div class="head"><h2>Jouw gekozen cadeaus</h2></div>${picksHtml}</section>` : ""}
-
-      <section class="block">
-        <div class="head">
-          <h2>${done ? "Overige cadeaus" : waiting ? "Kiezen" : "Beschikbaar"}</h2>
-          ${waiting ? "" : `<span class="muted">${available.length} nog te kiezen</span>`}
-        </div>
-        ${gridHtml}${!done && !waiting && available.length && hiddenCount > 0 ? `<p class="hint" style="margin-top:14px">Een paar cadeaus zie je (nog) niet. Die blijven bewaard zodat ook iedereen na jou 3 cadeaus kan krijgen.</p>` : ""}
-      </section>`;
-
-    app.querySelectorAll(".tile").forEach((btn) => btn.addEventListener("click", () => claim(btn.dataset.id)));
+    app.querySelectorAll(".tile").forEach((btn) => btn.addEventListener("click", () => reveal_(btn.dataset.id)));
   }
 
-  async function claim(itemId) {
+  async function reveal_(itemId) {
     if (busyItem) return;
     busyItem = itemId;
     renderPick();
     try {
       await runTransaction(db, async (tx) => {
         const itemRef = doc(db, "items", itemId);
-        const meRef = doc(db, "participants", me.id);
         const settingsSnap = await tx.get(doc(db, "settings", "game"));
-        const ids = [...new Set([itemId, ...items.map((i) => i.id)])];
-        const itemSnaps = await Promise.all(ids.map((id) => tx.get(doc(db, "items", id))));
-        const meSnap = await tx.get(meRef);
+        const snap = await tx.get(itemRef);
 
-        if (!settingsSnap.exists() || settingsSnap.data().phase !== "pick") {
-          throw new Error("Het kiezen is nog niet begonnen.");
-        }
-
-        if (!mustPick(me.id)) throw new Error("Jij hoeft zelf geen cadeaus te kiezen.");
-        if (!participants.length) throw new Error("Even geduld, de gegevens worden nog geladen.");
-
-        const list = itemSnaps.filter((sn) => sn.exists()).map((sn) => ({ id: sn.id, ...sn.data() }));
-        const item = list.find((i) => i.id === itemId);
-        if (!item) throw new Error("Dit cadeau bestaat niet meer.");
-        const mine = meSnap.data() || {};
-        const picks = mine.picks || [];
-
-        if (item.ownerId === me.id) throw new Error("Je kunt je eigen cadeau niet kiezen.");
-        if (item.claimedById) throw new Error("Net te laat: iemand anders heeft dit cadeau zojuist gekozen.");
-        if (picks.length >= ITEMS_TO_PICK) throw new Error(`Je hebt al ${ITEMS_TO_PICK} cadeaus gekozen.`);
-
-        const afterClaim = list.map((i) => (i.id === itemId ? { ...i, claimedById: me.id } : i));
-        if (!stillFeasible(afterClaim)) {
-          throw new Error("Dit cadeau moet bewaard blijven zodat ook anderen 3 cadeaus kunnen krijgen. Kies een ander cadeau.");
-        }
+        if (!settingsSnap.exists() || settingsSnap.data().phase !== "pick") throw new Error("Het kiezen is nog niet begonnen.");
+        if (!snap.exists()) throw new Error("Dit cadeau bestaat niet meer.");
+        const it = snap.data();
+        if (it.revealerId !== me.id || !it.assignedToId) throw new Error("Dit cadeau is niet voor jou om te onthullen.");
+        if (it.claimedById) throw new Error("Dit cadeau is al onthuld.");
 
         tx.update(itemRef, {
-          claimedById: me.id,
-          claimedByName: me.name,
+          claimedById: it.assignedToId,      // wie het cadeau koopt
+          claimedByName: it.assignedToName,
+          pickedById: me.id,                 // wie het cadeau heeft gekozen/onthuld
+          pickedByName: me.name,
           claimedAt: serverTimestamp()
         });
-        tx.update(meRef, { picks: [...picks, itemId] });
       });
     } catch (err) {
       console.error(err);
-      toast(err.message || "Kiezen mislukt. Probeer het opnieuw.", true);
+      toast(err.message || "Onthullen mislukt. Probeer het opnieuw.", true);
     } finally {
       busyItem = null;
-      if (myDoc && myDoc.submitted) renderPick();
+      if (myDoc && myDoc.submitted && !isExempt(me.id)) renderPick();
     }
   }
 
   // ── Beheerder ────────────────────────────────────────────────
   let participants = [];
+  const RESET = {
+    assignedToId: null, assignedToName: null, revealerId: null, revealerName: null,
+    claimedById: null, claimedByName: null, pickedById: null, pickedByName: null, claimedAt: null
+  };
 
   function startAdmin() {
     unsubs.forEach((u) => u());
@@ -688,18 +783,32 @@
     const byName = (a, b) => String(a.name || a.ownerName || "").localeCompare(String(b.name || b.ownerName || ""), "nl");
     const people = [...participants].sort(byName);
     const allItems = [...items].sort((a, b) => byName(a, b) || String(a.text).localeCompare(String(b.text), "nl"));
-    const claimedCount = items.filter((i) => i.claimedById).length;
+    const distributed = isDistributed();
+    const revealedCount = items.filter((i) => i.claimedById).length;
     const notSubmitted = people.filter((p) => !p.submitted);
-    const pickerCount = participants.filter((p) => mustPick(p.id)).length;
-    const feasible = stillFeasible(items);
+
+    // Totaal per koper
+    const totalsRows = people.map((p) => {
+      const buys = items.filter((i) => i.assignedToId === p.id);
+      return { p, n: buys.length, sum: sumPrice(buys) };
+    }).filter((r) => r.n > 0);
+    const sums = totalsRows.map((r) => r.sum);
+    const avg = sums.length ? sums.reduce((a, b) => a + b, 0) / sums.length : 0;
+    const spread = sums.length ? Math.max(...sums) - Math.min(...sums) : 0;
 
     const peopleRows = people.map((p) => {
       const given = items.filter((i) => i.ownerId === p.id);
-      const chosen = items.filter((i) => i.claimedById === p.id);
+      const buys = items.filter((i) => i.assignedToId === p.id);
+      const givenHtml = given.length
+        ? `<ul>${given.map((i) => `<li>${esc(i.text)} (${euro(i.price)})${distributed ? (i.assignedToName ? ` <span class="muted">→ koopt ${esc(i.assignedToName)}${i.claimedById ? "" : ", nog niet onthuld"}</span>` : ` <span class="muted">→ niet gekozen</span>`) : ""}</li>`).join("")}</ul>`
+        : `<span class="muted">geen</span>`;
+      const buysHtml = buys.length
+        ? `<ul>${buys.map((i) => `<li>${esc(i.text)} (${euro(i.price)}) <span class="muted">← van ${esc(i.ownerName)}${i.claimedById ? ", onthuld" : ", nog niet onthuld"}</span></li>`).join("")}</ul><span class="muted">Totaal ${euro(sumPrice(buys))}</span>`
+        : `<span class="muted">${isExempt(p.id) ? "koopt zelf niets" : distributed ? "geen" : "nog niet verdeeld"}</span>`;
       return `<tr>
-        <td><strong>${esc(p.name)}</strong>${p.submitted ? "" : `<br><span class="muted">nog geen cadeaus ingevoerd</span>`}${mustPick(p.id) ? "" : `<br><span class="muted">hoeft niet te kiezen</span>`}</td>
-        <td>${given.length ? `<ul>${given.map((i) => `<li>${esc(i.text)} (${euro(i.price)})${i.claimedByName ? ` <span class="muted">→ gekozen door ${esc(i.claimedByName)}</span>` : ""}</li>`).join("")}</ul>` : `<span class="muted">geen</span>`}</td>
-        <td>${chosen.length ? `<ul>${chosen.map((i) => `<li>${esc(i.text)} <span class="muted">← van ${esc(i.ownerName)}</span></li>`).join("")}</ul>` : `<span class="muted">geen</span>`}</td>
+        <td><strong>${esc(p.name)}</strong>${p.submitted ? "" : `<br><span class="muted">nog geen cadeaus ingevoerd</span>`}${isExempt(p.id) ? `<br><span class="muted">kiest zelf niet</span>` : ""}</td>
+        <td>${givenHtml}</td>
+        <td>${buysHtml}</td>
         <td><button class="danger" data-del-user="${esc(p.id)}">Verwijder</button></td>
       </tr>`;
     }).join("");
@@ -708,7 +817,8 @@
       <td>${esc(i.text)}${safeLink(i.link) ? ` <a href="${esc(safeLink(i.link))}" target="_blank" rel="noopener noreferrer">link</a>` : ""}</td>
       <td>${euro(i.price)}</td>
       <td>${esc(i.ownerName)}</td>
-      <td>${i.claimedByName ? esc(i.claimedByName) : `<span class="muted">nog niet gekozen</span>`}</td>
+      <td>${i.assignedToName ? esc(i.assignedToName) : `<span class="muted">${distributed ? "niet gekozen" : "–"}</span>`}</td>
+      <td>${i.claimedById ? "ja" : i.assignedToId ? `<span class="muted">nog niet</span>` : `<span class="muted">–</span>`}</td>
       <td><button class="danger" data-del-item="${esc(i.id)}">Verwijder</button></td>
     </tr>`).join("");
 
@@ -718,26 +828,33 @@
         <div>
           <strong>Fase: ${phase === "pick" ? "kiezen is gestart" : "cadeaus aandragen"}</strong>
           <p class="muted" style="margin-top:4px">${phase === "pick"
-            ? "Deelnemers kunnen nu blind cadeaus kiezen."
+            ? `Iedereen ontvangt ${ITEMS_TO_PICK} cadeaus. Verschil tussen het hoogste en laagste totaal van de kopers: ${euro(spread)}.`
             : notSubmitted.length
-              ? `Nog niet aangedragen (${notSubmitted.length}): ${notSubmitted.map((p) => esc(p.name)).join(", ")}.`
+              ? `Nog niet aangedragen (${notSubmitted.length}): ${notSubmitted.map((p) => esc(p.name)).join(", ")}. Zij doen niet mee als je nu verdeelt.`
               : participants.length ? "Iedereen heeft cadeaus aangedragen." : "Nog geen deelnemers."}</p>
-          ${!feasible ? `<p class="warn">Let op: met de cadeaus die er nu zijn kan niet iedereen ${ITEMS_TO_PICK} cadeaus krijgen. Er zijn ${items.length} cadeaus aangedragen en er zijn er ${pickerCount * ITEMS_TO_PICK} nodig (Rosalie en Sander hoeven niet te kiezen).</p>` : ""}
         </div>
         ${phase === "pick"
           ? `<button class="secondary" data-phase="submit">Terug naar aandragen</button>`
-          : `<button class="primary" data-phase="pick">Start het kiezen</button>`}
+          : `<button class="primary" data-phase="pick">Verdeel en start het kiezen</button>`}
       </div>
       <div class="stats">
         <span><strong>${participants.length}</strong> deelnemers</span>
         <span><strong>${items.length}</strong> cadeaus</span>
-        <span><strong>${claimedCount}</strong> gekozen</span>
+        <span><strong>${revealedCount}</strong> onthuld</span>
       </div>
+
+      ${distributed ? `<section class="block">
+        <div class="head"><h2>Totaal per persoon</h2><span class="muted">gemiddeld ${euro(avg)}, verschil ${euro(spread)}</span></div>
+        <div class="table-wrap"><table>
+          <thead><tr><th>Naam</th><th>Cadeaus</th><th>Totaal</th><th>Ten opzichte van gemiddeld</th></tr></thead>
+          <tbody>${totalsRows.map((r) => `<tr><td>${esc(r.p.name)}</td><td>${r.n}</td><td>${euro(r.sum)}</td><td>${r.sum - avg >= 0 ? "+" : "−"} ${euro(Math.abs(r.sum - avg))}</td></tr>`).join("")}</tbody>
+        </table></div>
+      </section>` : ""}
 
       <section class="block">
         <div class="head"><h2>Deelnemers</h2></div>
         <div class="table-wrap"><table>
-          <thead><tr><th>Naam</th><th>Heeft aangedragen</th><th>Heeft gekozen</th><th></th></tr></thead>
+          <thead><tr><th>Naam</th><th>Heeft aangedragen</th><th>Koopt</th><th></th></tr></thead>
           <tbody>${peopleRows || `<tr><td colspan="4" class="muted">Nog geen deelnemers.</td></tr>`}</tbody>
         </table></div>
       </section>
@@ -745,39 +862,84 @@
       <section class="block">
         <div class="head"><h2>Alle cadeaus</h2></div>
         <div class="table-wrap"><table>
-          <thead><tr><th>Cadeau</th><th>Prijs</th><th>Aangedragen door</th><th>Gekozen door</th><th></th></tr></thead>
-          <tbody>${itemRows || `<tr><td colspan="5" class="muted">Nog geen cadeaus.</td></tr>`}</tbody>
+          <thead><tr><th>Cadeau</th><th>Prijs</th><th>Aangedragen door</th><th>Koopt</th><th>Onthuld</th><th></th></tr></thead>
+          <tbody>${itemRows || `<tr><td colspan="6" class="muted">Nog geen cadeaus.</td></tr>`}</tbody>
         </table></div>
       </section>`;
 
-    app.querySelectorAll("[data-phase]").forEach((b) => b.addEventListener("click", () => setPhase(b.dataset.phase)));
+    app.querySelectorAll("[data-phase]").forEach((b) => b.addEventListener("click", () => (b.dataset.phase === "pick" ? startPick() : backToSubmit())));
     app.querySelectorAll("[data-del-user]").forEach((b) => b.addEventListener("click", () => deleteUser(b.dataset.delUser)));
     app.querySelectorAll("[data-del-item]").forEach((b) => b.addEventListener("click", () => deleteItem(b.dataset.delItem)));
   }
 
-  async function setPhase(next) {
+  // Verdeel de cadeaus en start het kiezen
+  async function startPick() {
+    const buyers = participants.filter((p) => p.submitted).map((p) => ({ id: p.id, name: p.name }))
+      .sort((a, b) => a.name.localeCompare(b.name, "nl"));
     const missing = participants.filter((p) => !p.submitted);
-    const msg = next === "pick"
-      ? "Het kiezen starten?" + (!stillFeasible(items) ? `\n\nLet op: met de cadeaus die er nu zijn kan niet iedereen ${ITEMS_TO_PICK} cadeaus krijgen.` : "") + (missing.length ? `\n\nLet op: ${missing.map((p) => p.name).join(", ")} ${missing.length === 1 ? "heeft" : "hebben"} nog geen cadeaus aangedragen.` : "")
-      : "Terug naar aandragen? Deelnemers kunnen dan tijdelijk niet kiezen. Keuzes die al gemaakt zijn blijven staan.";
+    if (items.length > 480) { toast("Te veel cadeaus om in één keer te verdelen.", true); return; }
+    const exempt = NO_PICK.filter((id) => buyers.some((b) => b.id === id));
+    const res = computeDistribution(items.map((i) => ({ id: i.id, ownerId: i.ownerId, price: Number(i.price) })), buyers, ITEMS_TO_PICK, exempt);
+    if (res.error) { toast(res.error, true); return; }
+
+    const sums = Object.values(res.totals);
+    const min = Math.min(...sums), max = Math.max(...sums);
+    const exemptNames = buyers.filter((b) => exempt.includes(b.id)).map((b) => b.name).join(" en ");
+    const msg = `Verdeling gemaakt: iedereen ontvangt ${ITEMS_TO_PICK} cadeaus. ${buyers.length - exempt.length} deelnemers kopen er elk ${ITEMS_TO_PICK}` +
+      (exemptNames ? `, plus een extra cadeau voor ${exemptNames}` : "") + `.\n\n` +
+      `Totaal per koper: van ${euro(min)} tot ${euro(max)} (verschil ${euro(max - min)}).` +
+      (missing.length ? `\n\nLet op: ${missing.map((p) => p.name).join(", ")} ${missing.length === 1 ? "heeft" : "hebben"} nog niets aangedragen en ${missing.length === 1 ? "doet" : "doen"} niet mee.` : "") +
+      `\n\nHet kiezen starten? Met Annuleren krijg je bij een volgende poging een nieuwe verdeling.`;
     if (!confirm(msg)) return;
+
     try {
-      await setDoc(doc(db, "settings", "game"), { phase: next, updatedAt: serverTimestamp() }, { merge: true });
-      toast(next === "pick" ? "Het kiezen is gestart." : "Teruggezet naar aandragen.");
+      const byItem = new Map(res.assignments.map((a) => [a.itemId, a]));
+      const nameOf = Object.fromEntries(buyers.map((b) => [b.id, b.name]));
+      const batch = writeBatch(db);
+      items.forEach((it) => {
+        const a = byItem.get(it.id);
+        batch.update(doc(db, "items", it.id), a
+          ? { ...RESET, assignedToId: a.buyerId, assignedToName: nameOf[a.buyerId], revealerId: a.revealerId, revealerName: nameOf[a.revealerId] }
+          : { ...RESET });
+      });
+      batch.set(doc(db, "settings", "game"), { phase: "pick", distributedAt: serverTimestamp(), updatedAt: serverTimestamp() }, { merge: true });
+      await batch.commit();
+      toast("De cadeaus zijn verdeeld en het kiezen is gestart.");
+    } catch (err) {
+      console.error(err);
+      toast("Starten mislukt.", true);
+    }
+  }
+
+  function resetAll(batch, exceptIds) {
+    items.filter((i) => !exceptIds.has(i.id)).forEach((i) => batch.update(doc(db, "items", i.id), { ...RESET }));
+    batch.set(doc(db, "settings", "game"), { phase: "submit", updatedAt: serverTimestamp() }, { merge: true });
+  }
+
+  async function backToSubmit() {
+    if (!confirm("Terug naar aandragen?\n\nDe verdeling en alle onthulde cadeaus worden gewist. Als je het kiezen opnieuw start, krijg je een nieuwe verdeling.")) return;
+    try {
+      const batch = writeBatch(db);
+      resetAll(batch, new Set());
+      await batch.commit();
+      toast("Teruggezet naar aandragen.");
     } catch (err) {
       console.error(err);
       toast("Wijzigen mislukt.", true);
     }
   }
 
+  const RESET_WARNING = "\n\nLet op: de verdeling is al gemaakt. Na het verwijderen wordt de verdeling gewist en moet je het kiezen opnieuw starten.";
+
   async function deleteItem(itemId) {
     const it = items.find((i) => i.id === itemId);
     if (!it) return;
-    if (!confirm(`Cadeau "${it.text}" van ${it.ownerName} verwijderen?` + (it.claimedByName ? `\n\n${it.claimedByName} had dit gekozen en mag daarna een nieuw cadeau kiezen.` : ""))) return;
+    const distributed = isDistributed();
+    if (!confirm(`Cadeau "${it.text}" van ${it.ownerName} verwijderen?` + (distributed ? RESET_WARNING : ""))) return;
     try {
       const batch = writeBatch(db);
       batch.delete(doc(db, "items", itemId));
-      if (it.claimedById) batch.update(doc(db, "participants", it.claimedById), { picks: arrayRemove(itemId) });
+      if (distributed) resetAll(batch, new Set([itemId]));
       await batch.commit();
       toast("Cadeau verwijderd.");
     } catch (err) {
@@ -790,22 +952,13 @@
     const p = participants.find((x) => x.id === userId);
     if (!p) return;
     const owned = items.filter((i) => i.ownerId === userId);
-    const chosen = items.filter((i) => i.claimedById === userId);
-    if (!confirm(`${p.name} verwijderen?\n\n- ${owned.length} aangedragen cadeaus worden ook verwijderd\n- ${chosen.length} gekozen cadeaus komen weer vrij`)) return;
+    const distributed = isDistributed();
+    if (!confirm(`${p.name} verwijderen?\n\n${owned.length} aangedragen cadeaus worden ook verwijderd.` + (distributed ? RESET_WARNING : ""))) return;
     try {
       const batch = writeBatch(db);
       batch.delete(doc(db, "participants", userId));
-      owned.forEach((it) => {
-        batch.delete(doc(db, "items", it.id));
-        if (it.claimedById && it.claimedById !== userId) {
-          batch.update(doc(db, "participants", it.claimedById), { picks: arrayRemove(it.id) });
-        }
-      });
-      chosen.forEach((it) => {
-        if (it.ownerId !== userId) {
-          batch.update(doc(db, "items", it.id), { claimedById: null, claimedByName: null, claimedAt: null });
-        }
-      });
+      owned.forEach((it) => batch.delete(doc(db, "items", it.id)));
+      if (distributed) resetAll(batch, new Set(owned.map((i) => i.id)));
       await batch.commit();
       toast(`${p.name} is verwijderd.`);
     } catch (err) {
